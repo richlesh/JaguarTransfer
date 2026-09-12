@@ -6,3 +6,9 @@ release/
 .DS_Store
 # Local license salt (injected in CI), if we add licensing later
 license.js
+
+# JetBrains IDE
+.idea/
+# Icon design working files
+*.acorn
+badge.png
