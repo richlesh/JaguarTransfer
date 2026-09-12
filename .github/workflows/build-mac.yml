@@ -64,7 +64,17 @@ jobs:
           CSC_KEY_PASSWORD: build-keychain-password
         run: |
           KEY_FILE=$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
-          echo "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
+          printf '%s\n' "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
+          # Fail fast with a clear message if the App Store Connect API key secret
+          # is missing or not a valid PEM (notarytool otherwise dies with the
+          # opaque 'invalidPEMDocument'). The .p8 must include the BEGIN/END lines.
+          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_FILE"; then
+            echo "::error::APPLE_API_KEY secret is empty or not a valid .p8 PEM."
+            echo "It must be the full contents of your App Store Connect AuthKey_*.p8," \
+                 "including the -----BEGIN PRIVATE KEY----- / -----END PRIVATE KEY----- lines" \
+                 "and its newlines. Also confirm APPLE_API_KEY_ID and APPLE_API_ISSUER are set."
+            exit 1
+          fi
           APPLE_API_KEY="$KEY_FILE" ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload DMG to release
