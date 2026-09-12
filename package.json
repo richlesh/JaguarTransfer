@@ -1,0 +1,93 @@
+{
+  "name": "jaguartransfer",
+  "productName": "JaguarTransfer",
+  "version": "1.0.0",
+  "description": "JaguarTransfer - Fast SFTP file manager for slow network links",
+  "main": "dist-electron/electron/main/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json && node scripts/copy-assets.mjs && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json && node scripts/copy-assets.mjs",
+    "build": "npm run build:renderer && npm run build:electron",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "postinstall": "electron-builder install-app-deps",
+    "start": "npm run build && electron .",
+    "dist:mac:x64": "npm run build && electron-builder --mac --x64",
+    "dist:mac:arm64": "npm run build && electron-builder --mac --arm64",
+    "dist:win:x64": "npm run build && electron-builder --win --x64",
+    "dist:win:arm64": "npm run build && electron-builder --win --arm64",
+    "dist:linux:x64": "npm run build && electron-builder --linux --x64",
+    "dist:linux:arm64": "npm run build && electron-builder --linux --arm64"
+  },
+  "build": {
+    "appId": "com.richardlesh.jaguartransfer",
+    "productName": "JaguarTransfer",
+    "icon": "resources/app_icon",
+    "artifactName": "JaguarTransfer-${version}-${arch}.${ext}",
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "dialogs/**",
+      "resources/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/@napi-rs/keyring*/**",
+      "**/node_modules/cpu-features/**",
+      "**/node_modules/ssh2/**"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": "dmg",
+      "icon": "resources/app_icon.icns"
+    },
+    "dmg": {
+      "icon": "resources/app_icon.icns"
+    },
+    "win": {
+      "icon": "resources/app_icon.ico",
+      "target": "nsis"
+    },
+    "linux": {
+      "icon": "resources/app_icon_256.png",
+      "category": "Utility",
+      "target": [
+        { "target": "deb", "arch": ["x64", "arm64"] },
+        { "target": "rpm", "arch": ["x64", "arm64"] }
+      ]
+    },
+    "rpm": {
+      "fpm": ["--rpm-rpmbuild-define", "_build_id_links none"]
+    }
+  },
+  "keywords": ["sftp", "ssh", "file-transfer", "electron"],
+  "homepage": "https://glowingcat.com/JaguarTransfer.html",
+  "author": {
+    "name": "Richard Lesh",
+    "email": "richlesh@github.com"
+  },
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ssh2": "^1.15.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^1.1.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ssh2": "^1.16.0"
+  }
+}

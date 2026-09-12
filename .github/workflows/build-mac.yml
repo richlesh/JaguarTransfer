@@ -1,0 +1,50 @@
+name: Build and Release macOS
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release version tag (e.g. 1.0.0)"
+        required: true
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer + main
+        run: npm run build
+
+      # NOTE: M1 ships unsigned. To enable Developer ID signing + notarization,
+      # add the certificate/keychain and APPLE_API_* steps (see BudgetLion's
+      # workflow) and set CSC_* + notarize in electron-builder.
+      - name: Build macOS ${{ matrix.arch }} DMG
+        run: ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
+
+      - name: Upload DMG to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: JaguarTransfer ${{ inputs.tag || github.ref_name }}
+          draft: true
+          files: dist/*.dmg

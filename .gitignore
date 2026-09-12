@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+.DS_Store
+# Local license salt (injected in CI), if we add licensing later
+license.js

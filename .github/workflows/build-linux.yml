@@ -1,0 +1,53 @@
+name: Build and Release Linux
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release version tag (e.g. 1.0.0)"
+        required: true
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ARM64 cross-compilation tools
+        if: matrix.arch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build renderer + main
+        run: npm run build
+
+      - name: Build Linux ${{ matrix.arch }}
+        run: ./node_modules/.bin/electron-builder --linux --${{ matrix.arch }} --publish never
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: JaguarTransfer ${{ inputs.tag || github.ref_name }}
+          draft: true
+          files: |
+            dist/*.deb
+            dist/*.rpm
