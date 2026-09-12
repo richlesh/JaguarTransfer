@@ -13,37 +13,92 @@ A fast, cross-platform **SFTP file manager** built for slow, high-latency links
 
 File-sharing protocols like SMB/CIFS and AFP are chatty and latency-sensitive —
 every metadata lookup and lock is a round-trip, so they slow to a crawl over a
-VPN. SFTP runs over a single SSH connection and tolerates latency far better,
-especially with request pipelining and parallel transfers (coming in a later
-milestone).
+VPN. SFTP runs over a single SSH connection and tolerates latency far better.
+TransferJaguar leans into that with a streaming transfer engine, resume, and
+optional compression, so moving files over a slow link stays responsive.
 
-## Status — Milestone 1
+---
 
-This is the M1 scaffold:
+## Features
 
-- App shell with splash/about dialogs (dynamic version).
-- **Connection manager** — create, edit, and delete site profiles.
-- **Connect** with three auth methods: private key (+ optional passphrase),
-  **ssh-agent**, and password / keyboard-interactive.
-- **Host-key TOFU** — trust-on-first-use verification with a persisted
-  trusted-hosts store; warns loudly if a host key changes.
-- **Single remote pane** — browse the start directory, navigate in/out, refresh,
-  with name / size / modified / permissions.
+### Connections
+- **Connection manager** — save, edit, and delete site profiles (host, port,
+  username, start directory, options), with connect / edit / delete right on
+  each site in the sidebar
+- **Three auth methods** — private key (with optional passphrase), **ssh-agent**,
+  and **password / keyboard-interactive**
+- **Host-key TOFU** — trust-on-first-use verification against a persisted
+  trusted-hosts store; a loud warning if a previously-trusted key changes
+  (possible MITM)
+- **Jump host / bastion** — connect through a bastion via SSH channel forwarding,
+  with its own host/port/user/auth and independent host-key verification
+- **Compression** — optional per-site `zlib@openssh.com` compression for slow links
+- **Auto-reconnect** — dropped SSH sessions reconnect automatically with
+  exponential backoff (re-dialing the bastion when used); a header indicator
+  shows "reconnecting…"
 
-Planned next: local pane, rename/delete/mkdir on both sides (M2), the pipelined
-parallel transfer engine + queue (M3), resume/reconnect/compression tuning (M4),
-and packaging/signing polish (M5). Jump-host/bastion connections are supported
-(connect through a bastion via SSH channel forwarding, with its own auth and
-host-key verification).
+### Dual-pane browsing
+- **Local + remote panes** side by side — the local filesystem on one side, the
+  connected server on the other
+- **Directory tree viewer** — a toggleable, collapsible directories-only tree
+  above each file list (lazy-loaded, expand/collapse triangles); click a folder
+  to make it the current directory. A draggable divider resizes tree vs. list
+- **Sortable columns** — click Name / Size / Modified to sort, click again to
+  reverse, with a ▲/▼ indicator; **resizable Name column**
+- **Directory placement** — choose whether folders sort at the top, inline with
+  files, or at the bottom (Settings)
+- **Show hidden files** — toggle dotfiles in both the list and the tree (Settings)
+- **File operations on both sides** — rename, delete (recursive, with
+  confirmation), and new folder
+- **Multi-select** — Cmd/Ctrl-click to toggle, Shift-click for a range; delete
+  and transfer act on the whole selection
+
+### Transfers
+- **Streaming transfer engine** — upload and download over SFTP with manual flow
+  control for reliable pause behavior, recursive directory transfers, and a
+  bounded concurrency pool for many files
+- **Drag-and-drop** between panes, or explicit **Upload → / ← Download** buttons
+- **Transfer queue** — a fixed bottom panel listing each transfer newest-first,
+  with a progress bar, %, bytes, file counts, throughput, and ETA
+- **Pause / resume / cancel** mid-transfer; confirmation before canceling an
+  active transfer, and before quitting while transfers are in progress
+- **Resume partial transfers** — an interrupted transfer continues from the
+  partial file's byte offset instead of restarting
+- **Conflict handling** — when a destination exists: keep both (auto-rename),
+  overwrite, or skip (Settings default)
+- **Optional checksum verify** — verify each file with SHA-256 after transfer
+  (uses the server's `sha256sum`; off by default)
+
+### App
+- **Light / dark theme** (Settings), applied throughout including the dialogs
+- **Settings** — theme, show-hidden-files, directory placement, conflict policy,
+  and checksum verify; reachable from the menu (⌘, / Ctrl+,) or the header gear
+- **License key** — enter an email + key to license the app; a periodic purchase
+  splash appears for unlicensed users (on launch and every 10th transfer request,
+  where a multi-select counts as one). The About box thanks licensed users
+- **Native menus** and splash / about dialogs
+- **Cross-platform** — macOS, Windows, and Linux (x64 + arm64)
+
+---
+
+## Status
+
+All planned milestones are implemented: connection management + auth + host-key
+TOFU (M1), dual-pane browsing and file operations (M2), the transfer engine +
+queue + drag-and-drop (M3), resume / auto-reconnect / conflict handling /
+checksum verify (M4), and signed packaging + release workflows (M5), plus
+jump-host/bastion support. Live end-to-end testing against production servers is
+ongoing.
 
 ## Data & security
 
 - **Site profiles** → `~/.transferjaguar-sites.json` (no secrets).
 - **Trusted host keys** → `~/.transferjaguar-known-hosts.json` (TOFU).
 - **App settings** → `~/.transferjaguar-settings.json`.
-- **Secrets** (passwords, key passphrases) → the **OS keychain** via
-  `@napi-rs/keyring` (Keychain / Credential Manager / libsecret), referenced by
-  site id — never written to the JSON files.
+- **Secrets** (passwords, key passphrases — including a separate bastion
+  credential) → the **OS keychain** via `@napi-rs/keyring` (Keychain / Windows
+  Credential Manager / libsecret), referenced by site id — never written to the
+  JSON files.
 - The renderer is sandboxed; all filesystem/network/secret access goes through
   the main process behind a typed IPC bridge (`window.transferJaguar`).
 
