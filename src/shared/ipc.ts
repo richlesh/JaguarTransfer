@@ -19,6 +19,11 @@ export interface AppSettings {
   showHiddenFiles?: boolean;
   /** Where directories appear in the file list relative to files. Default "top". */
   directorySort?: "top" | "inline" | "bottom";
+  /** Default conflict policy when a transfer destination exists. Default "rename". */
+  conflictPolicy?: "overwrite" | "skip" | "rename";
+  /** Verify each transferred file with a SHA-256 checksum (needs sha256sum on the
+   *  server; best-effort). Default off. */
+  verifyChecksum?: boolean;
   /** Max concurrent transfers (used later, M3). */
   maxConcurrentTransfers?: number;
   /** License info (set via a future License dialog). */

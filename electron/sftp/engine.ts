@@ -398,9 +398,10 @@ export interface TransferControl {
 function pipeStreams(
   read: NodeJS.ReadableStream & { destroy?: (e?: Error) => void; pause: () => void; resume: () => void },
   write: NodeJS.WritableStream & { destroy?: (e?: Error) => void; end: () => void },
-  onBytes: (transferred: number) => void
+  onBytes: (transferred: number) => void,
+  startOffset = 0
 ): TransferControl {
-  let transferred = 0;
+  let transferred = startOffset;
   let canceled = false;
   let paused = false;
   let ended = false; // read side reached EOF and we've called write.end()
@@ -479,30 +480,34 @@ function pipeStreams(
   };
 }
 
-/** Download one remote file to a local path (abortable/pausable). */
+/** Download one remote file to a local path (abortable/pausable). When
+ *  startOffset > 0, resume: read the remote from that offset and append locally. */
 export function downloadFile(
   sessionId: string,
   remotePath: string,
   localPath: string,
-  onBytes: (transferred: number) => void
+  onBytes: (transferred: number) => void,
+  startOffset = 0
 ): TransferControl {
   const s = sessionOrThrow(sessionId);
-  const read = s.sftp.createReadStream(remotePath, { highWaterMark: CHUNK_SIZE });
-  const write = createWriteStream(localPath);
-  return pipeStreams(read, write, onBytes);
+  const read = s.sftp.createReadStream(remotePath, { highWaterMark: CHUNK_SIZE, start: startOffset });
+  const write = createWriteStream(localPath, startOffset > 0 ? { flags: "a" } : {});
+  return pipeStreams(read, write, onBytes, startOffset);
 }
 
-/** Upload one local file to a remote path (abortable/pausable). */
+/** Upload one local file to a remote path (abortable/pausable). When
+ *  startOffset > 0, resume: read the local file from that offset and append. */
 export function uploadFile(
   sessionId: string,
   localPath: string,
   remotePath: string,
-  onBytes: (transferred: number) => void
+  onBytes: (transferred: number) => void,
+  startOffset = 0
 ): TransferControl {
   const s = sessionOrThrow(sessionId);
-  const read = createReadStream(localPath, { highWaterMark: CHUNK_SIZE });
-  const write = s.sftp.createWriteStream(remotePath);
-  return pipeStreams(read, write, onBytes);
+  const read = createReadStream(localPath, { highWaterMark: CHUNK_SIZE, start: startOffset });
+  const write = s.sftp.createWriteStream(remotePath, startOffset > 0 ? { flags: "a" } : {});
+  return pipeStreams(read, write, onBytes, startOffset);
 }
 
 // (legacy fastGet/fastPut bodies replaced by the stream-based versions above)
@@ -511,4 +516,47 @@ export function uploadFile(
 export async function localSize(path: string): Promise<number> {
   const st = await fsp.lstat(path);
   return Number(st.size) || 0;
+}
+
+/** Size of a remote file, or -1 if it doesn't exist (for conflict/resume). */
+export function remoteSize(sessionId: string, path: string): Promise<number> {
+  const s = sessionOrThrow(sessionId);
+  return new Promise((resolve) => {
+    s.sftp.stat(path, (err, stats) => {
+      if (err || !stats) resolve(-1);
+      else resolve(typeof stats.size === "number" ? stats.size : 0);
+    });
+  });
+}
+
+/** Run a command over an SSH exec channel; resolve stdout (trimmed) or reject. */
+export function sshExec(sessionId: string, command: string): Promise<string> {
+  const s = sessionOrThrow(sessionId);
+  return new Promise((resolve, reject) => {
+    s.client.exec(command, (err, stream) => {
+      if (err) return reject(new Error(err.message));
+      let out = "";
+      let errOut = "";
+      stream.on("data", (d: Buffer) => (out += d.toString()));
+      stream.stderr.on("data", (d: Buffer) => (errOut += d.toString()));
+      stream.on("close", (code: number) => {
+        if (code === 0) resolve(out.trim());
+        else reject(new Error(errOut.trim() || `exit ${code}`));
+      });
+    });
+  });
+}
+
+/** Best-effort SHA-256 of a remote file via `sha256sum`. Returns the lowercase
+ *  hex digest, or null if the command isn't available / fails. */
+export async function remoteSha256(sessionId: string, path: string): Promise<string | null> {
+  try {
+    // Quote the path safely for a POSIX shell.
+    const quoted = "'" + path.replace(/'/g, "'\\''") + "'";
+    const out = await sshExec(sessionId, `sha256sum ${quoted}`);
+    const hex = out.split(/\s+/)[0];
+    return /^[0-9a-f]{64}$/i.test(hex) ? hex.toLowerCase() : null;
+  } catch {
+    return null;
+  }
 }

@@ -174,13 +174,15 @@ export function App() {
             destDir,
             name: entry.name,
             isDirectory: entry.kind === "directory",
+            conflictPolicy: settings?.conflictPolicy ?? "rename",
+            verifyChecksum: !!settings?.verifyChecksum,
           });
         } catch (e) {
           setToast(e instanceof Error ? e.message : "Could not start the transfer.");
         }
       }
     },
-    [session, paths, localSep]
+    [session, paths, localSep, settings]
   );
 
   // When a task finishes, bump the destination pane's reload key so it re-lists.

@@ -43,6 +43,27 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           </select>
         </div>
 
+        <div className="field">
+          <label>When a transfer destination already exists</label>
+          <select
+            value={settings.conflictPolicy ?? "rename"}
+            onChange={(e) => onChange({ conflictPolicy: e.target.value as "overwrite" | "skip" | "rename" })}
+          >
+            <option value="rename">Keep both (rename the new one)</option>
+            <option value="overwrite">Overwrite</option>
+            <option value="skip">Skip</option>
+          </select>
+        </div>
+
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={!!settings.verifyChecksum}
+            onChange={(e) => onChange({ verifyChecksum: e.target.checked })}
+          />
+          Verify transfers with a SHA-256 checksum (requires sha256sum on the server)
+        </label>
+
         <div className="dialog-actions">
           <button onClick={onClose}>Done</button>
         </div>

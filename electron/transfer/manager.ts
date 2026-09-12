@@ -7,15 +7,39 @@ import { randomUUID } from "node:crypto";
 import { promises as fsp } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import type { TransferRequest, TransferTask, TransferStatus } from "../../src/shared/types.js";
-import { emaThroughput, etaSeconds } from "../../src/core/transferPlan.js";
+import { emaThroughput, etaSeconds, resolveConflict } from "../../src/core/transferPlan.js";
 import {
   downloadFile,
   uploadFile,
   ensureRemoteDir,
   readdirDetailed,
   localSize,
+  remoteSize,
+  remoteSha256,
   type TransferControl,
 } from "../sftp/engine.js";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+
+/** SHA-256 hex digest of a local file (streamed). */
+function localSha256(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const rs = createReadStream(path);
+    rs.on("data", (d) => hash.update(d));
+    rs.on("end", () => resolve(hash.digest("hex")));
+    rs.on("error", reject);
+  });
+}
+
+/** Local file size, or -1 if the path doesn't exist (for resume checks). */
+async function localSizeSafe(path: string): Promise<number> {
+  try {
+    return await localSize(path);
+  } catch {
+    return -1;
+  }
+}
 
 /** A flat file unit within a task (after directory expansion). */
 interface FileUnit {
@@ -48,6 +72,10 @@ interface Task {
   activeControls: Set<TransferControl>;
   /** True while a runTask loop is active (prevents double-runs on resume). */
   runActive: boolean;
+  /** Conflict/resume policy for this task (default "rename"). */
+  conflictPolicy: "overwrite" | "skip" | "rename";
+  /** Verify each file with a SHA-256 checksum after transfer (best-effort). */
+  verifyChecksum: boolean;
 }
 
 type Emit = (task: TransferTask) => void;
@@ -170,22 +198,44 @@ async function planTask(t: Task, req: TransferRequest): Promise<void> {
   t.planned = true;
 }
 
-/** Transfer a single file unit, wiring cumulative-byte progress. */
+/** Transfer a single file unit, wiring cumulative-byte progress. Resumes from a
+ *  partial destination when one exists and is smaller than the source. */
 async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> {
   const onBytes = (transferred: number) => {
     f.done = transferred;
     sampleThroughput(t);
     publish(t);
   };
+
+  // Determine a resume offset: if a partial destination exists and is smaller
+  // than the source, continue from its size. If it's already the full size,
+  // treat the file as done (idempotent). Overwrite policy forces a fresh start.
+  let startOffset = 0;
+  if (t.conflictPolicy !== "overwrite" && f.sizeBytes > 0) {
+    const destSize =
+      t.direction === "download"
+        ? await localSizeSafe(f.dest)
+        : await remoteSize(t.sessionId, f.dest);
+    if (destSize >= f.sizeBytes && destSize >= 0) {
+      // Destination already complete — skip transferring this file.
+      f.done = f.sizeBytes;
+      f.completed = true;
+      publish(t);
+      return "completed";
+    }
+    if (destSize > 0) startOffset = destSize; // resume from the partial
+  }
+
   if (t.direction === "download") {
     await fsp.mkdir(dirname(f.dest), { recursive: true });
   } else {
     await ensureRemoteDir(t.sessionId, dirname(f.dest).split(/[\\/]/).join("/"));
   }
+  f.done = startOffset;
   const control =
     t.direction === "download"
-      ? downloadFile(t.sessionId, f.source, f.dest, onBytes)
-      : uploadFile(t.sessionId, f.source, f.dest, onBytes);
+      ? downloadFile(t.sessionId, f.source, f.dest, onBytes, startOffset)
+      : uploadFile(t.sessionId, f.source, f.dest, onBytes, startOffset);
 
   // Register so pause()/cancel() reach the in-flight stream immediately.
   t.activeControls.add(control);
@@ -196,6 +246,19 @@ async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> 
     const result = await control.done;
     if (result === "completed") {
       f.done = f.sizeBytes;
+      // Optional post-transfer integrity check (best-effort; needs sha256sum
+      // on the server). A mismatch fails the whole task.
+      if (t.verifyChecksum) {
+        const localPath = t.direction === "download" ? f.dest : f.source;
+        const remotePath = t.direction === "download" ? f.source : f.dest;
+        const remoteHash = await remoteSha256(t.sessionId, remotePath);
+        if (remoteHash) {
+          const localHash = await localSha256(localPath);
+          if (localHash !== remoteHash) {
+            throw new Error(`Checksum mismatch for ${f.dest} (transfer may be corrupt).`);
+          }
+        }
+      }
       f.completed = true;
       publish(t);
     }
@@ -271,6 +334,8 @@ export async function enqueue(req: TransferRequest): Promise<string> {
     pauseRequested: false,
     activeControls: new Set(),
     runActive: false,
+    conflictPolicy: req.conflictPolicy ?? "rename",
+    verifyChecksum: !!req.verifyChecksum,
   };
   tasks.set(id, t);
   publish(t);
@@ -278,6 +343,24 @@ export async function enqueue(req: TransferRequest): Promise<string> {
   // Plan + run asynchronously; errors surface on the task.
   (async () => {
     try {
+      // Resolve a name conflict at the destination for the whole item first.
+      const action = await resolveTopLevelConflict(req, t.conflictPolicy);
+      if (action.action === "skip") {
+        t.status = "canceled";
+        t.error = "Skipped (destination exists).";
+        publish(t);
+        return;
+      }
+      if (action.name !== req.name) {
+        // Renamed to avoid clobbering an existing destination.
+        t.name = action.name;
+        t.destPath =
+          req.direction === "download"
+            ? join(req.destDir, action.name)
+            : req.destDir.replace(/\/+$/, "") + "/" + action.name;
+        req = { ...req, name: action.name };
+        publish(t);
+      }
       await planTask(t, req);
       publish(t);
       if (!t.cancelRequested) await runTask(t);
@@ -289,6 +372,32 @@ export async function enqueue(req: TransferRequest): Promise<string> {
   })();
 
   return id;
+}
+
+/** Existing entry names in the destination directory (opposite side). */
+async function destExistingNames(req: TransferRequest): Promise<Set<string>> {
+  try {
+    if (req.direction === "download") {
+      const dirents = await fsp.readdir(req.destDir).catch(() => [] as string[]);
+      return new Set(dirents);
+    }
+    const kids = await readdirDetailed(req.sessionId, req.destDir).catch(() => []);
+    return new Set(kids.map((k) => k.name));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Resolve the top-level item's name against the destination via the policy.
+ *  Note: "overwrite" still returns the same name; per-file resume/skip is handled
+ *  in runFile so overwrite truncates and skip/rename resume partials. */
+async function resolveTopLevelConflict(
+  req: TransferRequest,
+  policy: "overwrite" | "skip" | "rename"
+): Promise<{ action: "transfer"; name: string } | { action: "skip" }> {
+  if (policy === "overwrite") return { action: "transfer", name: req.name };
+  const names = await destExistingNames(req);
+  return resolveConflict(req.name, names, policy);
 }
 
 export function cancel(id: string): void {

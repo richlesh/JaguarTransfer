@@ -117,6 +117,8 @@ export interface TransferRequest {
   /** Whether the item is a directory (recursive) or a file. */
   isDirectory: boolean;
   conflictPolicy?: ConflictPolicy;
+  /** Verify each file with a SHA-256 checksum after transfer (best-effort). */
+  verifyChecksum?: boolean;
 }
 
 /** A queued/active transfer task, as surfaced to the renderer. */

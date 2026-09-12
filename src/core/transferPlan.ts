@@ -1,5 +1,6 @@
 // Pure, framework-agnostic helpers for transfer planning and progress math.
 // Kept free of Node/Electron/ssh2 imports so they can be unit-tested directly.
+import type { ConflictPolicy } from "../shared/types";
 
 /** A flat file unit within a transfer task (after directory expansion). */
 export interface PlannedFile {
@@ -88,4 +89,48 @@ export function scheduleWaves(itemCount: number, concurrency: number): number[][
     waves.push(wave);
   }
   return waves;
+}
+
+/** Split a filename into its base and extension (extension includes the dot).
+ *  Leading-dot names (dotfiles) are treated as having no extension. */
+export function splitExt(name: string): { base: string; ext: string } {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return { base: name, ext: "" }; // no ext, or leading-dot dotfile
+  return { base: name.slice(0, dot), ext: name.slice(dot) };
+}
+
+/**
+ * Generate a unique name not present in `existing` by inserting " (n)" before
+ * the extension: "file.txt" -> "file (1).txt", "file (2).txt", … Directories
+ * (ext "") get "dir (1)". Returns the original name when it isn't taken.
+ */
+export function uniqueName(name: string, existing: Set<string>): string {
+  if (!existing.has(name)) return name;
+  const { base, ext } = splitExt(name);
+  for (let n = 1; n < 100000; n++) {
+    const candidate = `${base} (${n})${ext}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base} (${Date.now()})${ext}`; // pathological fallback
+}
+
+/** The action to take for one item given the policy and whether it exists. */
+export type ConflictAction =
+  | { action: "transfer"; name: string } // proceed (possibly renamed)
+  | { action: "skip" };
+
+/**
+ * Resolve what to do for a destination item: if it doesn't already exist,
+ * transfer under its own name; otherwise apply the policy — overwrite (same
+ * name), skip, or rename (unique name derived from `existingNames`).
+ */
+export function resolveConflict(
+  name: string,
+  existingNames: Set<string>,
+  policy: ConflictPolicy
+): ConflictAction {
+  if (!existingNames.has(name)) return { action: "transfer", name };
+  if (policy === "skip") return { action: "skip" };
+  if (policy === "rename") return { action: "transfer", name: uniqueName(name, existingNames) };
+  return { action: "transfer", name }; // overwrite
 }
