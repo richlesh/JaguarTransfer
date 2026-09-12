@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>License Key</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, sans-serif;
+      background: #f5f5f5;
+      color: #1e1e1e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+    body.dark { background: #1e1e1e; color: #e0e0e0; }
+    h1 { font-size: 16px; font-weight: 600; }
+    p { font-size: 14px; color: #666; }
+    body.dark p { color: #aaa; }
+    input {
+      width: 100%;
+      background: #fff;
+      color: #1e1e1e;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 14px;
+      outline: none;
+    }
+    body.dark input { background: #3a3a3c; color: #e0e0e0; border-color: #555; }
+    #license-input { font-family: monospace; text-align: center; }
+    input:focus { border-color: #0a84ff; }
+    input.invalid { border-color: #ff453a; }
+    a { color: #0a84ff; text-decoration: none; font-size: 14px; }
+    body.dark a { color: #4da3ff; }
+    a:hover { text-decoration: underline; }
+    .buttons { display: flex; gap: 10px; width: 100%; }
+    button {
+      flex: 1;
+      padding: 7px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #save-btn { background: #008800; color: #fff; }
+    #save-btn:not(:disabled):hover { background: #00cc00; }
+    #save-btn:disabled { background: #bbb; cursor: default; }
+    body.dark #save-btn:disabled { background: #444; }
+    #cancel-btn { background: #ddd; color: #1e1e1e; }
+    #cancel-btn:hover { background: #ccc; }
+    body.dark #cancel-btn { background: #3a3a3c; color: #e0e0e0; }
+    body.dark #cancel-btn:hover { background: #4a4a4e; }
+  </style>
+</head>
+<body>
+  <h1>License Key</h1>
+  <p>Enter your email address and license key</p>
+  <input id="name-input" type="text" placeholder="Your email address" spellcheck="false" style="text-align:center;">
+  <input id="license-input" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" maxlength="19">
+  <a id="donate-link" href="https://glowingcat.com/TransferJaguar.html">Donate at Glowing Cat Software to get a license key.</a>
+  <div class="buttons">
+    <button id="cancel-btn">Cancel</button>
+    <button id="save-btn" disabled>Save</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+    const { expectedLicenseKey } = require("../utilities.cjs");
+
+    ipcRenderer.invoke("settings-get").then((settings) => {
+      if ((settings.theme || "light") === "dark") document.body.classList.add("dark");
+    });
+
+    document.getElementById("donate-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/TransferJaguar.html");
+    });
+
+    const nameInput = document.getElementById("name-input");
+    const licenseInput = document.getElementById("license-input");
+    const saveBtn = document.getElementById("save-btn");
+
+    function formatKey(raw) {
+      const clean = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 16);
+      return clean.match(/.{1,4}/g)?.join("-") || "";
+    }
+
+    function validate() {
+      const name = nameInput.value.trim();
+      const clean = licenseInput.value.replace(/-/g, "");
+      const keyOk = clean.length === 16;
+      const match = keyOk && name.length > 0 && clean.toUpperCase() === expectedLicenseKey(name);
+      saveBtn.disabled = !match;
+      licenseInput.classList.toggle("invalid", clean.length > 0 && !keyOk);
+    }
+
+    licenseInput.addEventListener("input", () => {
+      const before = licenseInput.value.slice(0, licenseInput.selectionStart).replace(/[^a-zA-Z0-9]/g, "").length;
+      licenseInput.value = formatKey(licenseInput.value);
+      let count = 0, newPos = 0;
+      for (let i = 0; i < licenseInput.value.length; i++) {
+        if (/[a-zA-Z0-9]/.test(licenseInput.value[i])) count++;
+        if (count === before) { newPos = i + 1; break; }
+      }
+      licenseInput.setSelectionRange(newPos, newPos);
+      validate();
+    });
+
+    nameInput.addEventListener("input", validate);
+
+    ipcRenderer.on("license-data", (_e, { key, userName }) => {
+      nameInput.value = userName || "";
+      licenseInput.value = key ? formatKey(key) : "";
+      validate();
+    });
+
+    saveBtn.addEventListener("click", () => {
+      ipcRenderer.invoke("license-save", {
+        key: licenseInput.value.replace(/-/g, ""),
+        userName: nameInput.value.trim(),
+      });
+    });
+
+    document.getElementById("cancel-btn").addEventListener("click", () => ipcRenderer.invoke("license-cancel"));
+
+    [nameInput, licenseInput].forEach((el) =>
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !saveBtn.disabled) saveBtn.click();
+        if (e.key === "Escape") document.getElementById("cancel-btn").click();
+      })
+    );
+  </script>
+</body>
+</html>

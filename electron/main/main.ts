@@ -3,7 +3,7 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { registerIpcHandlers } from "../ipc/handlers.js";
-import { buildMenu, showSplash, registerDialogIpc } from "../dialogs.js";
+import { buildMenu, showSplash, registerDialogIpc, isLicensed } from "../dialogs.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import { disconnectAll } from "../sftp/engine.js";
 import { configureManager, hasActiveTransfers, cancelAll } from "../transfer/manager.js";
@@ -99,7 +99,8 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIpcHandlers();
   registerDialogIpc();
-  showSplash();
+  // Show the purchase splash on launch only for unlicensed users.
+  if (!isLicensed()) showSplash();
   createWindow();
 });
 

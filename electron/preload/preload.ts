@@ -37,6 +37,7 @@ const api: TransferJaguarApi = {
   transferResume: (id: string) => ipcRenderer.invoke(IPC.transferResume, id),
   transferList: () => ipcRenderer.invoke(IPC.transferList),
   transferClearFinished: () => ipcRenderer.invoke(IPC.transferClearFinished),
+  recordTransferRequest: () => ipcRenderer.invoke(IPC.recordTransferRequest),
   onTransferProgress: (cb: (task: TransferTask) => void) => {
     const listener = (_e: unknown, task: TransferTask) => cb(task);
     ipcRenderer.on(IPC.transferProgress, listener);

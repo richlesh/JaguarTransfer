@@ -164,6 +164,9 @@ export function App() {
         return;
       }
       const fromSep = fromSide === "local" ? localSep : "/";
+      if (entries.length === 0) return;
+      // One transfer request per user gesture (a multi-select counts as one).
+      void window.transferJaguar.recordTransferRequest();
       for (const entry of entries) {
         const sourcePath = fromDir.replace(new RegExp(`${fromSep === "\\" ? "\\\\" : fromSep}+$`), "") + fromSep + entry.name;
         try {

@@ -26,9 +26,12 @@ export interface AppSettings {
   verifyChecksum?: boolean;
   /** Max concurrent transfers (used later, M3). */
   maxConcurrentTransfers?: number;
-  /** License info (set via a future License dialog). */
+  /** License info (set via the License dialog). */
   licenseKey?: string;
   userName?: string;
+  /** Count of transfer requests (a multi-select gesture = 1); drives the
+   *  periodic purchase nag for unlicensed users. */
+  transferRequestCount?: number;
 }
 
 /** The API surface exposed to the renderer via contextBridge (window.transferJaguar). */
@@ -70,6 +73,8 @@ export interface TransferJaguarApi {
   transferResume(id: string): Promise<void>;
   transferList(): Promise<TransferTask[]>;
   transferClearFinished(): Promise<void>;
+  /** Record one transfer request gesture (multi-select = 1); nags if unlicensed. */
+  recordTransferRequest(): Promise<void>;
   /** Subscribe to per-task progress updates. Returns an unsubscribe function. */
   onTransferProgress(cb: (task: TransferTask) => void): () => void;
 
@@ -105,6 +110,7 @@ export const IPC = {
   transferResume: "transfer:resume",
   transferList: "transfer:list",
   transferClearFinished: "transfer:clearFinished",
+  recordTransferRequest: "transfer:recordRequest",
   /** main → renderer push channel for progress updates. */
   transferProgress: "transfer:progress",
   /** main → renderer: open the Settings dialog (from the native menu). */

@@ -32,6 +32,8 @@
       "dist-electron/**",
       "dialogs/**",
       "resources/**",
+      "utilities.cjs",
+      "license.cjs",
       "package.json"
     ],
     "asarUnpack": [

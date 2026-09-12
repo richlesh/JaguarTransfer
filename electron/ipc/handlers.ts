@@ -13,6 +13,7 @@ import { trustHostKey } from "../knownHosts.js";
 import { connect, disconnect, list, rename as remoteRename, mkdir as remoteMkdir, remove as remoteRemove } from "../sftp/engine.js";
 import * as localFs from "../local/fs.js";
 import * as transferManager from "../transfer/manager.js";
+import { recordTransferRequest } from "../dialogs.js";
 
 export function registerIpcHandlers(): void {
   // Settings
@@ -81,6 +82,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.transferResume, (_e, id: string) => transferManager.resume(id));
   ipcMain.handle(IPC.transferList, () => transferManager.listTasks());
   ipcMain.handle(IPC.transferClearFinished, () => transferManager.clearFinished());
+  ipcMain.handle(IPC.recordTransferRequest, () => { recordTransferRequest(); });
 
   // Utilities
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {

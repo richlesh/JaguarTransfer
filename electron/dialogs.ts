@@ -5,10 +5,24 @@
 
 import { app, BrowserWindow, Menu, ipcMain, shell } from "electron";
 import { join } from "node:path";
-import { loadSettings } from "./settings.js";
+import { loadSettings, saveSettings } from "./settings.js";
 
 const HOMEPAGE = "https://glowingcat.com/TransferJaguar.html";
 const ISSUES = "https://github.com/richlesh/TransferJaguar/issues";
+
+// License validation lives in plain CJS at the app root (shared with the dialog
+// HTML). Loaded via require so both TS and the HTML use the same implementation.
+const appRoot = app.getAppPath();
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { isValidLicense } = require(join(appRoot, "utilities.cjs")) as {
+  isValidLicense: (key: string, userName: string) => boolean;
+};
+
+/** True when the current settings carry a valid (key + email) license. */
+export function isLicensed(): boolean {
+  const s = loadSettings();
+  return !!(s.licenseKey && s.userName && isValidLicense(s.licenseKey, s.userName));
+}
 
 function iconPath(): string {
   return join(app.getAppPath(), "resources", "app_icon_256.png");
@@ -35,6 +49,52 @@ export function showSplash(): void {
   });
   splashWin.on("closed", () => (splashWin = null));
 }
+
+/**
+ * Record ONE transfer request (a user gesture — a multi-select counts as one),
+ * incrementing a persisted counter. Every 10th request, show the purchase splash
+ * for unlicensed users. Returns the new count. Licensed users are never nagged.
+ */
+export function recordTransferRequest(): number {
+  const s = loadSettings();
+  const count = (s.transferRequestCount ?? 0) + 1;
+  try {
+    saveSettings({ ...s, transferRequestCount: count });
+  } catch {
+    // best-effort; still nag based on the in-memory count
+  }
+  if (count > 0 && count % 10 === 0 && !isLicensed()) {
+    showSplash();
+  }
+  return count;
+}
+
+// ---- License dialog ----
+let licenseWin: BrowserWindow | null = null;
+export function openLicense(): void {
+  if (licenseWin && !licenseWin.isDestroyed()) return licenseWin.focus();
+  licenseWin = new BrowserWindow({
+    width: 400,
+    height: 300,
+    resizable: false,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  licenseWin.setMenuBarVisibility(false);
+  licenseWin.loadFile(join(app.getAppPath(), "dialogs", "license.html"));
+  licenseWin.webContents.once("did-finish-load", () => {
+    const s = loadSettings();
+    licenseWin?.webContents.send("license-data", { key: s.licenseKey || "", userName: s.userName || "" });
+  });
+  licenseWin.on("closed", () => (licenseWin = null));
+}
+
+ipcMain.handle("license-save", (_e, { key, userName }: { key: string; userName: string }) => {
+  if (!isValidLicense(key, userName)) return;
+  const s = loadSettings();
+  saveSettings({ ...s, licenseKey: key.toUpperCase(), userName });
+  licenseWin?.close();
+});
+ipcMain.handle("license-cancel", () => licenseWin?.close());
 
 function showAbout(): void {
   if (aboutWin) {
@@ -84,6 +144,7 @@ export function buildMenu(win: BrowserWindow): void {
             submenu: [
               { label: `About ${app.name}`, click: () => showAbout() },
               { type: "separator" as const },
+              { label: "License Key…", click: () => openLicense() },
               {
                 label: "Settings…",
                 accelerator: "Cmd+,",
@@ -142,7 +203,13 @@ export function buildMenu(win: BrowserWindow): void {
       submenu: [
         { label: "TransferJaguar Website", click: () => shell.openExternal(HOMEPAGE) },
         { label: "Report an Issue", click: () => shell.openExternal(ISSUES) },
-        ...(isMac ? [] : [{ label: "About TransferJaguar", click: () => showAbout() } as Electron.MenuItemConstructorOptions]),
+        ...(isMac
+          ? []
+          : [
+              { type: "separator" as const },
+              { label: "License Key…", click: () => openLicense() } as Electron.MenuItemConstructorOptions,
+              { label: "About TransferJaguar", click: () => showAbout() } as Electron.MenuItemConstructorOptions,
+            ]),
       ],
     },
   ];
