@@ -70,6 +70,30 @@ npm run dist:win:x64       # or :arm64
 npm run dist:linux:x64     # or :arm64
 ```
 
+## Releasing (signed, via GitHub Actions)
+
+Pushing a **tag** (e.g. `1.0.0`) — or running a workflow manually with a tag —
+triggers the mac/win/linux build workflows, which produce **signed** artifacts
+and upload them to a **draft** GitHub Release.
+
+Required repository **secrets**:
+
+- `LICENSE_SALT` — the production HMAC salt written into `license.cjs` at build
+  time (the committed file is gitignored; without this secret keys won't validate).
+- **macOS signing + notarization**: `APPLE_CERTIFICATE_BASE64`,
+  `APPLE_CERTIFICATE_PASSWORD` (Developer ID cert .p12, base64-encoded), and the
+  App Store Connect API key for notarization: `APPLE_API_KEY` (the .p8 contents),
+  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. The signing identity/Team ID
+  (`RICHARD A LESH (MMZ3Y97NTP)` / `MMZ3Y97NTP`) is set in `package.json` /
+  the workflow.
+- **Windows signing** (Azure Trusted Signing): `AZURE_CLIENT_ID`,
+  `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_SIGNING_ENDPOINT`,
+  `AZURE_SIGNING_ACCOUNT_NAME`, `AZURE_SIGNING_CERTIFICATE_PROFILE_NAME`.
+
+Linux `.deb`/`.rpm` are unsigned (standard). macOS hardened-runtime entitlements
+are in `entitlements.plist`; `afterPack.cjs` strips stray xattrs before signing.
+
+
 ## License
 
 GNU General Public License v3.0 — see [LICENSE](LICENSE).

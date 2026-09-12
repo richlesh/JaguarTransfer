@@ -32,14 +32,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD=build-keychain-password
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "$CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Inject license salt
+        run: |
+          echo "const LICENSE_SALT = \"${{ secrets.LICENSE_SALT }}\";" > license.cjs
+          echo "module.exports = { LICENSE_SALT };" >> license.cjs
+
       - name: Build renderer + main
         run: npm run build
 
-      # NOTE: M1 ships unsigned. To enable Developer ID signing + notarization,
-      # add the certificate/keychain and APPLE_API_* steps (see BudgetLion's
-      # workflow) and set CSC_* + notarize in electron-builder.
-      - name: Build macOS ${{ matrix.arch }} DMG
-        run: ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
+      - name: Build macOS ${{ matrix.arch }} DMG (signed + notarized)
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: MMZ3Y97NTP
+          CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain
+          CSC_KEY_PASSWORD: build-keychain-password
+        run: |
+          KEY_FILE=$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+          echo "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
+          APPLE_API_KEY="$KEY_FILE" ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload DMG to release
         uses: softprops/action-gh-release@v3

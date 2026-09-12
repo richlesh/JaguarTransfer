@@ -41,10 +41,15 @@
       "**/node_modules/cpu-features/**",
       "**/node_modules/ssh2/**"
     ],
+    "afterPack": "./afterPack.cjs",
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
-      "icon": "resources/app_icon.icns"
+      "icon": "resources/app_icon.icns",
+      "identity": "RICHARD A LESH (MMZ3Y97NTP)",
+      "notarize": true,
+      "entitlements": "entitlements.plist",
+      "entitlementsInherit": "entitlements.plist"
     },
     "dmg": {
       "icon": "resources/app_icon.icns"

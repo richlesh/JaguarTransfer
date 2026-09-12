@@ -14,6 +14,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     permissions:
+      id-token: write
       contents: write
     strategy:
       matrix:
@@ -32,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Inject license salt
+        run: |
+          @"
+          const LICENSE_SALT = "${{ secrets.LICENSE_SALT }}";
+          module.exports = { LICENSE_SALT };
+          "@ | Set-Content license.cjs
+        shell: powershell
+
       - name: Build renderer + main
         run: npm run build
 
@@ -43,10 +52,27 @@ jobs:
           $cache = Join-Path $env:LOCALAPPDATA "electron-builder\Cache\nsis"
           if (Test-Path $cache) { Remove-Item -Recurse -Force $cache }
 
-      # NOTE: M1 ships unsigned. To enable Authenticode signing, add the signing
-      # step (see BudgetLion's workflow, e.g. Azure Artifact Signing).
       - name: Build Windows ${{ matrix.arch }} installer
         run: ./node_modules/.bin/electron-builder --win --${{ matrix.arch }} --publish never
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign installer with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Upload installer to release
         uses: softprops/action-gh-release@v3
