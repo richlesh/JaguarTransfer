@@ -1,7 +1,7 @@
 {
   "name": "transferjaguar",
   "productName": "TransferJaguar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TransferJaguar - Fast SFTP file manager for slow network links",
   "main": "dist-electron/electron/main/main.js",
   "type": "module",
@@ -62,15 +62,35 @@
       "icon": "resources/app_icon_256.png",
       "category": "Utility",
       "target": [
-        { "target": "deb", "arch": ["x64", "arm64"] },
-        { "target": "rpm", "arch": ["x64", "arm64"] }
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ]
     },
     "rpm": {
-      "fpm": ["--rpm-rpmbuild-define", "_build_id_links none"]
+      "fpm": [
+        "--rpm-rpmbuild-define",
+        "_build_id_links none"
+      ]
     }
   },
-  "keywords": ["sftp", "ssh", "file-transfer", "electron"],
+  "keywords": [
+    "sftp",
+    "ssh",
+    "file-transfer",
+    "electron"
+  ],
   "homepage": "https://glowingcat.com/TransferJaguar.html",
   "author": {
     "name": "Richard Lesh",
@@ -93,8 +113,10 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "^1.1.6",
+    "basic-ftp": "6.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "webdav": "5.10.0"
   }
 }

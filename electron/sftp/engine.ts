@@ -11,6 +11,7 @@ import type { SFTPWrapper, ConnectConfig } from "ssh2";
 import type { Site, RemoteEntry, RemoteListing, HostKeyPrompt } from "../../src/shared/types.js";
 import { verifyHostKey } from "../knownHosts.js";
 import { getSecret, jumpAccount } from "../secrets.js";
+import { isRsyncUsable, rsyncDownload, rsyncUpload } from "./rsync.js";
 
 interface Session {
   id: string;
@@ -23,6 +24,10 @@ interface Session {
   userClosed: boolean;
   /** True while a reconnect loop is running. */
   reconnecting: boolean;
+  /** Set once an rsync transfer fails for a persistent reason (e.g. the server
+   *  rejects the key): subsequent transfers skip rsync and use the built-in path
+   *  directly, so we don't repeatedly attempt (and warn about) a doomed rsync. */
+  rsyncDisabled?: boolean;
 }
 
 const sessions = new Map<string, Session>();
@@ -60,10 +65,7 @@ export interface ConnectOutcome {
   sessionId: string;
   cwd: string;
 }
-export type EngineConnectResult =
-  | ConnectOutcome
-  | { ok: false; error: string }
-  | { ok: false; needsHostKeyTrust: true; prompt: HostKeyPrompt };
+export type EngineConnectResult = import("../backend/types.js").EngineConnectResult;
 
 /**
  * Build the ssh2 auth part of the connect config from the site + its stored
@@ -567,12 +569,7 @@ export function getSession(sessionId: string): Session | undefined {
 }
 
 /** One entry from a remote directory (name + kind + size), for walking trees. */
-export interface RemoteChild {
-  name: string;
-  isDirectory: boolean;
-  isSymlink: boolean;
-  sizeBytes: number;
-}
+export type RemoteChild = import("../backend/types.js").RemoteChild;
 
 export function readdirDetailed(sessionId: string, path: string): Promise<RemoteChild[]> {
   const s = sessionOrThrow(sessionId);
@@ -609,13 +606,7 @@ export async function ensureRemoteDir(sessionId: string, dir: string): Promise<v
 }
 
 /** A running transfer that can be paused/resumed/canceled mid-file. */
-export interface TransferControl {
-  /** Resolves when the file finishes; rejects on error; resolves early if canceled. */
-  done: Promise<"completed" | "canceled">;
-  pause(): void;
-  resume(): void;
-  cancel(): void;
-}
+export type TransferControl = import("../backend/types.js").TransferControl;
 
 /** Drive a read→write transfer with progress, pause/resume, and cancel.
  *
@@ -623,7 +614,7 @@ export interface TransferControl {
  * source on every destination 'drain', which defeats a manual pause(). Instead
  * we consume the readable in flowing mode and manage backpressure + pause
  * ourselves, so pause() reliably halts the byte flow until resume(). */
-function pipeStreams(
+export function pipeStreams(
   read: NodeJS.ReadableStream & { destroy?: (e?: Error) => void; pause: () => void; resume: () => void },
   write: NodeJS.WritableStream & { destroy?: (e?: Error) => void; end: () => void },
   onBytes: (transferred: number) => void,
@@ -718,6 +709,24 @@ export function downloadFile(
   startOffset = 0
 ): TransferControl {
   const s = sessionOrThrow(sessionId);
+  // rsync-over-SSH path (opt-in, when usable). rsync resumes natively via
+  // --partial, so we hand it the whole file (offset 0) and let it delta the rest.
+  if (isRsyncUsable(s.site)) {
+    return rsyncDownload(s.site, remotePath, localPath, onBytes, 0);
+  }
+  return downloadFileStream(sessionId, remotePath, localPath, onBytes, startOffset);
+}
+
+/** Built-in SFTP-stream download (no rsync). Used directly as the fallback when
+ *  an rsync transfer fails. */
+export function downloadFileStream(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  onBytes: (transferred: number) => void,
+  startOffset = 0
+): TransferControl {
+  const s = sessionOrThrow(sessionId);
   const read = s.sftp.createReadStream(remotePath, { highWaterMark: CHUNK_SIZE, start: startOffset });
   const write = createWriteStream(localPath, startOffset > 0 ? { flags: "a" } : {});
   return pipeStreams(read, write, onBytes, startOffset);
@@ -733,9 +742,40 @@ export function uploadFile(
   startOffset = 0
 ): TransferControl {
   const s = sessionOrThrow(sessionId);
+  if (isRsyncUsable(s.site)) {
+    return rsyncUpload(s.site, localPath, remotePath, onBytes, 0);
+  }
+  return uploadFileStream(sessionId, localPath, remotePath, onBytes, startOffset);
+}
+
+/** Built-in SFTP-stream upload (no rsync). Used directly as the fallback when
+ *  an rsync transfer fails. */
+export function uploadFileStream(
+  sessionId: string,
+  localPath: string,
+  remotePath: string,
+  onBytes: (transferred: number) => void,
+  startOffset = 0
+): TransferControl {
+  const s = sessionOrThrow(sessionId);
   const read = createReadStream(localPath, { highWaterMark: CHUNK_SIZE, start: startOffset });
   const write = s.sftp.createWriteStream(remotePath, startOffset > 0 ? { flags: "a" } : {});
   return pipeStreams(read, write, onBytes, startOffset);
+}
+
+/** True when the given session would use rsync for byte transfers (opt-in +
+ *  usable). Lets the transfer manager fall back to the built-in stream path if
+ *  an rsync transfer fails. */
+export function isRsyncActive(sessionId: string): boolean {
+  const s = sessions.get(sessionId);
+  return s ? isRsyncUsable(s.site) && !s.rsyncDisabled : false;
+}
+
+/** Disable rsync for the rest of this session (after a persistent rsync failure),
+ *  so subsequent transfers go straight to the built-in path without retrying. */
+export function disableRsyncForSession(sessionId: string): void {
+  const s = sessions.get(sessionId);
+  if (s) s.rsyncDisabled = true;
 }
 
 // (legacy fastGet/fastPut bodies replaced by the stream-based versions above)
@@ -788,3 +828,38 @@ export async function remoteSha256(sessionId: string, path: string): Promise<str
     return null;
   }
 }
+
+// ---- RemoteBackend conformance ----
+//
+// Expose the engine's functions as a protocol-neutral RemoteBackend so the
+// registry can dispatch to it by protocol. No behavior change — this only wraps
+// the existing exports. SFTP supports resume in both directions, server-side
+// checksums (via sha256sum), and SSH host-key TOFU.
+
+import type { RemoteBackend } from "../backend/types.js";
+
+export const sftpBackend: RemoteBackend = {
+  capabilities: {
+    resumeDownload: true,
+    resumeUpload: true,
+    checksum: true,
+    hostKeyTofu: true,
+    pausable: true,
+  },
+  connect,
+  disconnect,
+  list,
+  rename,
+  mkdir,
+  remove,
+  readdirDetailed,
+  ensureRemoteDir,
+  remoteSize,
+  downloadFile,
+  uploadFile,
+  remoteSha256,
+  isRsyncActive,
+  disableRsyncForSession,
+  downloadFileStream,
+  uploadFileStream,
+};

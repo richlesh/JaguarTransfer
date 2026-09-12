@@ -1,6 +1,6 @@
 ![app_icon_256](resources/app_icon_256.png)
 
-# TransferJaguar v1.0.0
+# TransferJaguar v1.1.0
 
 A fast, cross-platform **SFTP file manager** built for slow, high-latency links
 (VPNs), where SMB/AFP crawl. Built with Electron, React, and TypeScript.
@@ -22,6 +22,9 @@ optional compression, so moving files over a slow link stays responsive.
 ## Features
 
 ### Connections
+- **Multi-protocol** — connect over **SFTP (SSH)**, **WebDAV (HTTP/HTTPS)**,
+  **FTP / FTPS**, **Dropbox**, **OneDrive**, or **Google Drive** (OAuth); pick
+  the protocol per site. See [Protocols](#protocols) for capability differences
 - **Connection manager** — save, edit, and delete site profiles (host, port,
   username, start directory, options), with connect / edit / delete right on
   each site in the sidebar
@@ -81,7 +84,148 @@ optional compression, so moving files over a slow link stays responsive.
 
 ---
 
-## Status
+## Protocols
+
+TransferJaguar speaks several remote protocols; choose one per site in the site
+editor. All browsing, transfers, the queue, drag-and-drop, and conflict handling
+work the same way regardless of protocol — only the connection setup and a few
+capabilities differ.
+
+### SFTP (SSH)
+The original, most fully-featured path. Private-key / ssh-agent / password auth,
+host-key TOFU, jump-host/bastion, compression, auto-reconnect, resume in **both**
+directions, and optional SHA-256 checksum verification (via `sha256sum` on the
+server).
+
+**Optional rsync transfers.** An SFTP site can opt in to using the local
+`rsync` binary (over SSH) for file copies, which delta-encodes transfers — only
+changed bytes move, a big win on slow links and re-syncs. Enable it in the site
+editor ("Use rsync for file copies"), where you can set the path to the `rsync`
+executable (with a platform default and a Browse button). Browsing, rename,
+mkdir, and delete still go through the SFTP connection; only the byte transfer
+uses rsync. Requirements and limits:
+- **Key or ssh-agent auth only** — rsync drives the system `ssh`, which can't be
+  fed a password non-interactively. Password-auth sites fall back to the
+  built-in transfer.
+- **No jump host** (v1) and the `rsync` binary must exist — otherwise it falls
+  back to the built-in transfer automatically ("when available").
+- **No mid-transfer pause** for rsync copies (cancel works); resume is native
+  via `--partial --append-verify`.
+- rsync's `ssh` uses its own `known_hosts` (accepting new keys automatically),
+  separate from the app's host-key TOFU store.
+
+### WebDAV (HTTP/HTTPS)
+For self-hosted cloud (**Nextcloud**/**ownCloud**), **SharePoint**, **Box**, and
+NAS boxes. Configure a site with:
+- **URL** — the full WebDAV collection URL, e.g.
+  `https://cloud.example.com/remote.php/dav/files/alice/`
+- **Authentication** — **Basic** (username + password), **Bearer token**, or
+  **None** (public). The secret goes to the OS keychain, like SFTP secrets.
+- **Start directory** — optional path within the collection (defaults to `/`).
+
+Runs over a single TLS connection (port 443), so it's proxy/firewall-friendly.
+Security relies on the server's TLS certificate chain (there is no SSH host-key
+TOFU). SSH-only options — private keys, ssh-agent, compression, and jump hosts —
+are hidden for WebDAV sites.
+
+### FTP / FTPS
+For legacy servers and shared hosting that only speak FTP. Choose a **security
+mode** per site:
+- **Explicit FTPS** — FTP over TLS via `AUTH TLS` (usually port 21). Preferred.
+- **Implicit FTPS** — TLS from connect (usually port 990), for older servers.
+- **Plain FTP** — unencrypted. The editor shows a clear warning; use only when
+  the server offers nothing better, ideally on a trusted network.
+
+FTP allows only one operation per control connection, so each session opens a
+small **pool** of connections to keep transfers concurrent. Because FTP has no
+mid-transfer pause, the **Pause** control is hidden for FTP transfers; **cancel**
+works, and interrupted transfers **resume from the partial offset** where the
+server supports it (`REST`/`APPE`), falling back to a restart otherwise. There's
+no SSH host-key TOFU (FTPS relies on the server's TLS certificate) and no
+checksum verification.
+
+### Capability differences
+
+| Capability            | SFTP            | WebDAV                     | FTP / FTPS                 | Dropbox                    | OneDrive                   | Google Drive               |
+| --------------------- | --------------- | -------------------------- | -------------------------- | -------------------------- | -------------------------- | -------------------------- |
+| Browse / rename / mkdir / delete | ✅ | ✅                        | ✅                         | ✅                         | ✅                         | ✅                         |
+| Resume **downloads**  | ✅              | ✅ (HTTP `Range`)          | ✅ (`REST`, best-effort)¹  | ✅ (HTTP `Range`)          | ✅ (HTTP `Range`)          | ✅ (binary; exports whole)³|
+| Resume **uploads**    | ✅              | ❌ (restarts from 0)²      | ✅ (`APPE`, best-effort)¹  | ❌ (restarts from 0)       | ❌ (restarts from 0)       | ❌ (restarts from 0)       |
+| Pause mid-transfer    | ✅              | ✅                         | ❌ (control hidden)        | ✅ downloads / ❌ uploads  | ✅ downloads / ❌ uploads  | ✅ downloads / ❌ uploads  |
+| Checksum verify       | ✅ (`sha256sum`)| ❌                         | ❌                         | ❌                         | ❌                         | ❌                         |
+| Host-key TOFU         | ✅              | — (TLS/PKI)                | — (TLS/PKI for FTPS)       | — (OAuth/TLS)              | — (OAuth/TLS)              | — (OAuth/TLS)              |
+| Jump host / compression | ✅            | —                          | —                          | —                          | —                          | —                          |
+
+### Google Drive (OAuth)
+Connect a **Google Drive** account with OAuth 2.0 — no password is stored. Pick
+the Google Drive protocol and click **Connect to Google Drive**; tokens are
+stored in the OS keychain and refreshed transparently. An optional start folder
+scopes the initial view (default is My Drive root). Uploads use Drive's resumable
+upload; binary downloads resume via HTTP `Range`.
+
+**Google-format files** (Docs, Sheets, Slides, …) have no raw bytes, so they're
+shown in listings and **downloaded by exporting**: Docs → `.docx`, Sheets →
+`.xlsx`, Slides → `.pptx`, and other Google formats → `.pdf`. The matching
+extension is appended to the downloaded filename.
+
+**Build setup (maintainers).** In the **Google Cloud Console**: create a project,
+enable the **Google Drive API**, configure the **OAuth consent screen**
+(External; add yourself as a Test user), then create an **OAuth client ID** of
+type **Desktop app**. Register the redirect URI `http://localhost:53682/`. Put
+the client ID in `electron/oauth/provider.ts` (`GOOGLE_PROVIDER.clientId`) or set
+the `GOOGLE_CLIENT_ID` environment variable. Google Desktop clients also issue a
+**client secret** that must be sent at the token endpoint even with PKCE — put it
+in `GOOGLE_PROVIDER.clientSecret` or set `GOOGLE_CLIENT_SECRET`. The flow uses
+PKCE + loopback with `access_type=offline` for a refresh token.
+
+¹ FTP resume depends on server support; a failed resume surfaces as a task error
+and can be retried (e.g. with Overwrite) to restart cleanly.
+² WebDAV `PUT` has no portable append, so an interrupted upload starts over.
+³ Google-native exports (Docs/Sheets/Slides) download whole (no `Range`); regular
+binary files resume from the partial offset.
+
+### OneDrive (OAuth)
+Connect a **OneDrive** account (personal or work/school) with OAuth 2.0 via
+Microsoft Graph — no password is stored. Pick the OneDrive protocol and click
+**Connect to OneDrive**; the app stores access + refresh tokens in the OS
+keychain and refreshes them transparently. An optional start folder scopes the
+initial view (default is the drive root). Large uploads use Graph upload
+sessions; downloads resume via HTTP `Range`.
+
+**Build setup (maintainers).** Register an app in the **Azure Portal** (Azure
+Active Directory → App registrations). Add it as a *public client / Mobile and
+desktop applications* with the redirect URI `http://localhost:53682/`, and under
+**API permissions** add the delegated Microsoft Graph scopes `offline_access`,
+`User.Read`, and `Files.ReadWrite.All`. Use the **common** tenant so personal and
+work accounts can sign in. Put the Application (client) ID in
+`electron/oauth/provider.ts` (`ONEDRIVE_PROVIDER.clientId`) or set the
+`ONEDRIVE_CLIENT_ID` environment variable. PKCE + loopback means no client
+secret is needed.
+
+### Dropbox (OAuth)
+Connect a **Dropbox** account with OAuth 2.0 — no password is stored. In the site
+editor, pick the Dropbox protocol and click **Connect to Dropbox**: a browser
+window opens Dropbox's consent screen, and on approval the app stores the access
+and refresh tokens in the OS keychain (never in the JSON files). Access tokens
+are refreshed transparently. An optional start folder scopes the initial view;
+the default is the account root. Large uploads use Dropbox upload sessions
+automatically; downloads resume via HTTP `Range`.
+
+**Build setup (maintainers).** Dropbox OAuth needs an app **client ID** (app
+key), created at <https://www.dropbox.com/developers/apps> as a *Scoped access*
+/ *Full Dropbox* app. Register the exact redirect URI
+`http://localhost:53682/` (Dropbox matches redirect URIs exactly, so a fixed
+loopback port is used rather than a random one). Put the key in
+`electron/oauth/provider.ts` (`DROPBOX_PROVIDER.clientId`) or set the
+`DROPBOX_CLIENT_ID` environment variable. The flow uses **PKCE** with a
+**loopback redirect**, so no client secret is needed or shipped. Until a real
+client ID is provided, the Dropbox option reports that it isn't configured.
+
+¹ FTP resume depends on server support; a failed resume surfaces as a task error
+and can be retried (e.g. with Overwrite) to restart cleanly.
+² WebDAV `PUT` has no portable append, so an interrupted upload starts over.
+
+
 
 All planned milestones are implemented: connection management + auth + host-key
 TOFU (M1), dual-pane browsing and file operations (M2), the transfer engine +
@@ -99,6 +243,9 @@ ongoing.
   credential) → the **OS keychain** via `@napi-rs/keyring` (Keychain / Windows
   Credential Manager / libsecret), referenced by site id — never written to the
   JSON files.
+- **OAuth tokens** (Dropbox / OneDrive / Google Drive access + refresh tokens) →
+  the same **OS keychain**, stored per site and refreshed transparently; never
+  written to the JSON files.
 - The renderer is sandboxed; all filesystem/network/secret access goes through
   the main process behind a typed IPC bridge (`window.transferJaguar`).
 
@@ -108,6 +255,8 @@ ongoing.
 - [React](https://react.dev) + [Vite](https://vitejs.dev)
 - [TypeScript](https://www.typescriptlang.org)
 - [ssh2](https://github.com/mscdex/ssh2) — SSH/SFTP client
+- [webdav](https://github.com/perry-mitchell/webdav-client) — WebDAV client
+- [basic-ftp](https://github.com/patrickjuchli/basic-ftp) — FTP / FTPS client
 - [@napi-rs/keyring](https://github.com/napi-rs/keyring-node) — OS keychain
 
 ## Development
@@ -137,6 +286,11 @@ Required repository **secrets**:
 
 - `LICENSE_SALT` — the production HMAC salt written into `license.cjs` at build
   time (the committed file is gitignored; without this secret keys won't validate).
+- **OAuth client credentials** (injected into the compiled `provider.js` at build
+  time by `scripts/inject-oauth.mjs`; the committed source ships placeholders):
+  `DROPBOX_CLIENT_ID`, `ONEDRIVE_CLIENT_ID`, `GOOGLE_CLIENT_ID`, and
+  `GOOGLE_CLIENT_SECRET`. Any that are unset simply stay as placeholders (that
+  provider then reports "not configured").
 - **macOS signing + notarization**: `APPLE_CERTIFICATE_BASE64`,
   `APPLE_CERTIFICATE_PASSWORD` (Developer ID cert .p12, base64-encoded), and the
   App Store Connect API key for notarization: `APPLE_API_KEY` (the .p8 contents),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type KeyboardEvent } from "react";
 import type { FsEntry, FsListing } from "../shared/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PromptDialog } from "./PromptDialog";
@@ -84,6 +84,22 @@ function joinPath(base: string, child: string, sep: string): string {
   return base.replace(new RegExp(`${sep === "\\" ? "\\\\" : sep}+$`), "") + sep + child;
 }
 
+/** True when `target` is `base` itself or a descendant of it. Used to decide
+ *  whether the directory tree (rooted at `base`) still contains the current
+ *  directory, or whether it must be re-based higher. */
+function isWithin(base: string, target: string, sep: string): boolean {
+  const norm = (p: string) => {
+    const t = p.replace(new RegExp(`${sep === "\\" ? "\\\\" : sep}+$`), "");
+    return t === "" ? sep : t; // keep root as the separator
+  };
+  const b = norm(base);
+  const t = norm(target);
+  if (b === t) return true;
+  // Descendant check: target starts with base + separator (root handled specially).
+  const prefix = b === sep ? sep : b + sep;
+  return t.startsWith(prefix);
+}
+
 /** A directory view (local or remote) with navigate, refresh, new folder,
  *  rename, and delete (with confirmation). */
 export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey, showHidden, directorySort }: Props) {
@@ -106,6 +122,15 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
   const paneRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<"name" | "size" | "modified">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Type-to-select (typeahead): accumulate typed characters and jump to the
+  // first matching entry. The buffer resets after a short idle.
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const typeahead = useRef<{ buffer: string; timer: ReturnType<typeof setTimeout> | null }>({
+    buffer: "",
+    timer: null,
+  });
 
   // Click a header: toggle direction if it's the current column, else switch to
   // it (ascending). Directories always group first regardless of sort.
@@ -222,6 +247,17 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
 
+  // Keep the directory tree rooted so it always contains the current directory.
+  // If the user navigates ABOVE (or outside) the tree's current root — e.g. via
+  // the parent-folder button past the original base — re-anchor the tree at the
+  // current path so it re-bases instead of losing the location.
+  useEffect(() => {
+    if (!treeVisible) return;
+    if (!isWithin(treeRoot, path, ops.sep)) {
+      setTreeRoot(path);
+    }
+  }, [path, treeVisible, treeRoot, ops.sep]);
+
   const doRename = useCallback(
     async (entry: FsEntry, newName: string) => {
       setRenaming(null);
@@ -298,6 +334,97 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
     setLastClicked(name);
   };
 
+  /** Select a single entry by name and scroll it into view (used by typeahead). */
+  const selectAndReveal = useCallback((name: string) => {
+    setSelected(new Set([name]));
+    setLastClicked(name);
+    rowRefs.current.get(name)?.scrollIntoView({ block: "nearest" });
+  }, []);
+
+  /** Type-to-select: match the first entry whose name begins with the typed
+   *  buffer (case-insensitive), in the current sorted order. Repeatedly typing
+   *  the SAME letter cycles through entries starting with that letter. The buffer
+   *  clears after ~800ms of no typing, or on Escape. */
+  const onListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // Ignore modifier combos (let Cmd/Ctrl shortcuts through) and non-character keys.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    // Tab: move focus to the OTHER file-list pane (Shift+Tab does the same here,
+    // since there are only two). Keeps keyboard users on the panes.
+    if (e.key === "Tab") {
+      const lists = Array.from(document.querySelectorAll<HTMLElement>(".pane-list"));
+      if (lists.length > 1 && listRef.current) {
+        e.preventDefault();
+        const here = lists.indexOf(listRef.current);
+        const other = lists[(here + 1) % lists.length];
+        other?.focus();
+      }
+      return;
+    }
+
+    // Return/Enter: open the selected folder (navigate into it). Only when a
+    // single directory is selected — matches double-click behavior.
+    if (e.key === "Enter") {
+      const chosen = sortedEntries.filter((x) => selected.has(x.name));
+      if (chosen.length === 1 && chosen[0].kind === "directory") {
+        e.preventDefault();
+        void load(joinPath(path, chosen[0].name, ops.sep));
+      }
+      return;
+    }
+
+    if (e.key === "Escape") {
+      typeahead.current.buffer = "";
+      if (typeahead.current.timer) clearTimeout(typeahead.current.timer);
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      typeahead.current.buffer = typeahead.current.buffer.slice(0, -1);
+    } else if (e.key.length === 1) {
+      // Printable single character (letters, digits, punctuation). Space is
+      // allowed as a continuation but never as the first character.
+      if (e.key === " " && typeahead.current.buffer === "") return;
+      e.preventDefault();
+      typeahead.current.buffer += e.key;
+    } else {
+      return; // arrows, tab, enter, function keys, etc. — not typeahead input
+    }
+
+    const names = sortedEntries.map((x) => x.name);
+    if (names.length === 0) return;
+    const buf = typeahead.current.buffer.toLowerCase();
+
+    let matchIdx = -1;
+    if (buf.length === 1) {
+      // Single character: cycle from just after the current selection.
+      const current = names.findIndex((n) => selected.has(n));
+      const start = current >= 0 ? current + 1 : 0;
+      for (let i = 0; i < names.length; i++) {
+        const idx = (start + i) % names.length;
+        if (names[idx].toLowerCase().startsWith(buf)) {
+          matchIdx = idx;
+          break;
+        }
+      }
+    } else {
+      matchIdx = names.findIndex((n) => n.toLowerCase().startsWith(buf));
+    }
+    if (matchIdx >= 0) selectAndReveal(names[matchIdx]);
+
+    // Reset the buffer after a short idle.
+    if (typeahead.current.timer) clearTimeout(typeahead.current.timer);
+    typeahead.current.timer = setTimeout(() => {
+      typeahead.current.buffer = "";
+    }, 800);
+  };
+
+  // Clear any pending typeahead timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (typeahead.current.timer) clearTimeout(typeahead.current.timer);
+    };
+  }, []);
   return (
     <div
       ref={paneRef}
@@ -385,7 +512,13 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
           <div className="tree-divider" title="Drag to resize" onMouseDown={startTreeResize} />
         </>
       )}
-      <div className="pane-list">
+      <div
+        className="pane-list"
+        ref={listRef}
+        tabIndex={0}
+        onKeyDown={onListKeyDown}
+        aria-label="File list (type to select)"
+      >
         <table className="file-table" style={{ tableLayout: "fixed" }}>
           <colgroup>
             <col style={{ width: nameWidth }} />
@@ -418,6 +551,10 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
               sortedEntries.map((e) => (
                 <tr
                   key={e.name}
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(e.name, el);
+                    else rowRefs.current.delete(e.name);
+                  }}
                   className={(e.kind === "directory" ? "row-dir" : "") + (selected.has(e.name) ? " selected" : "")}
                   draggable={transferEnabled}
                   onDragStart={(ev) => {

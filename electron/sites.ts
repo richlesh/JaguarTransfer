@@ -29,6 +29,7 @@ export function listSites(): Site[] {
 
 /** Strip any transient secret and normalize into a stored Site. */
 function toStored(input: SiteInput, id: string): Site {
+  const protocol = input.protocol ?? "sftp";
   return {
     id,
     name: input.name.trim(),
@@ -39,8 +40,20 @@ function toStored(input: SiteInput, id: string): Site {
     privateKeyPath: input.privateKeyPath?.trim() || undefined,
     startDir: input.startDir?.trim() || undefined,
     compression: !!input.compression,
+    protocol,
+    useRsync: protocol === "sftp" ? !!input.useRsync : undefined,
+    rsyncPath: protocol === "sftp" && input.useRsync ? input.rsyncPath?.trim() || undefined : undefined,
+    baseUrl: protocol === "webdav" ? input.baseUrl?.trim() || undefined : undefined,
+    webdavAuth: protocol === "webdav" ? input.webdavAuth ?? "basic" : undefined,
+    ftpSecurity: protocol === "ftp" ? input.ftpSecurity ?? "explicit" : undefined,
+    dropboxStartPath: protocol === "dropbox" ? input.dropboxStartPath?.trim() || undefined : undefined,
+    dropboxAccount: protocol === "dropbox" ? input.dropboxAccount?.trim() || undefined : undefined,
+    onedriveStartPath: protocol === "onedrive" ? input.onedriveStartPath?.trim() || undefined : undefined,
+    onedriveAccount: protocol === "onedrive" ? input.onedriveAccount?.trim() || undefined : undefined,
+    gdriveStartPath: protocol === "gdrive" ? input.gdriveStartPath?.trim() || undefined : undefined,
+    gdriveAccount: protocol === "gdrive" ? input.gdriveAccount?.trim() || undefined : undefined,
     jump:
-      input.jump && input.jump.enabled && input.jump.host.trim()
+      protocol === "sftp" && input.jump && input.jump.enabled && input.jump.host.trim()
         ? {
             enabled: true,
             host: input.jump.host.trim(),

@@ -46,9 +46,10 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
         <div className="field">
           <label>When a transfer destination already exists</label>
           <select
-            value={settings.conflictPolicy ?? "rename"}
-            onChange={(e) => onChange({ conflictPolicy: e.target.value as "overwrite" | "skip" | "rename" })}
+            value={settings.conflictPolicy ?? "ask"}
+            onChange={(e) => onChange({ conflictPolicy: e.target.value as "ask" | "overwrite" | "skip" | "rename" })}
           >
+            <option value="ask">Ask each time (Replace / Keep both / Cancel)</option>
             <option value="rename">Keep both (rename the new one)</option>
             <option value="overwrite">Overwrite</option>
             <option value="skip">Skip</option>

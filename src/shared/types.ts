@@ -4,6 +4,17 @@
 /** How to authenticate to an SFTP server. */
 export type AuthMethod = "key" | "agent" | "password";
 
+/** Transfer protocol a site speaks. Existing (untagged) sites are SFTP. */
+export type Protocol = "sftp" | "webdav" | "ftp" | "dropbox" | "onedrive" | "gdrive";
+
+/** How to authenticate to a WebDAV server. */
+export type WebdavAuth = "basic" | "bearer" | "none";
+
+/** FTP transport security. "explicit" = FTPS via AUTH TLS (port 21),
+ *  "implicit" = FTPS with TLS from connect (port 990), "none" = plain FTP
+ *  (unencrypted — discouraged). */
+export type FtpSecurity = "explicit" | "implicit" | "none";
+
 /** A saved connection profile. Secrets (password, key passphrase) are NEVER
  *  stored here — they live in the OS keychain, referenced by this site's id. */
 export interface Site {
@@ -21,6 +32,39 @@ export interface Site {
   compression?: boolean;
   /** Jump host / bastion: connect through this host to reach the target. */
   jump?: JumpHost;
+  /** SFTP only: use the local `rsync` binary (over SSH) for file copies when
+   *  it's usable (key/agent auth, no jump host, binary present); otherwise the
+   *  app falls back to its built-in streaming transfer. */
+  useRsync?: boolean;
+  /** Path to the local rsync executable (platform default when empty). */
+  rsyncPath?: string;
+
+  /** Which protocol this site uses. Absent = "sftp" (back-compat with existing
+   *  profiles written before multi-protocol support). */
+  protocol?: Protocol;
+  /** WebDAV: the full collection URL, e.g.
+   *  "https://cloud.example.com/remote.php/dav/files/alice/". */
+  baseUrl?: string;
+  /** WebDAV: authentication scheme. The secret (password / bearer token) lives
+   *  in the keychain under the site id, like SFTP secrets. */
+  webdavAuth?: WebdavAuth;
+  /** FTP: transport security (explicit/implicit FTPS, or plain FTP). Uses
+   *  host/port/username like SFTP; the password lives in the keychain. */
+  ftpSecurity?: FtpSecurity;
+  /** Dropbox: optional start folder within the account (defaults to "/", the
+   *  account root). OAuth tokens live in the keychain, not here. */
+  dropboxStartPath?: string;
+  /** Dropbox: label of the connected account (e.g. name/email), for display.
+   *  Set after a successful "Connect to Dropbox". */
+  dropboxAccount?: string;
+  /** OneDrive: optional start folder within the drive (defaults to "/"). */
+  onedriveStartPath?: string;
+  /** OneDrive: label of the connected account, for display. */
+  onedriveAccount?: string;
+  /** Google Drive: optional start folder (defaults to "/", My Drive root). */
+  gdriveStartPath?: string;
+  /** Google Drive: label of the connected account (email), for display. */
+  gdriveAccount?: string;
 }
 
 /** A jump host (bastion) the connection is tunneled through. Its secret
@@ -113,9 +157,11 @@ export interface KnownHost {
 /** Transfer direction. */
 export type TransferDirection = "upload" | "download";
 
-/** How to handle a destination that already exists (M3: overwrite only, but the
- *  type is here so M4 can add skip/rename without a contract change). */
-export type ConflictPolicy = "overwrite" | "skip" | "rename";
+/** How to handle a destination that already exists. "ask" (the default) means
+ *  the renderer prompts the user (Replace / Keep both / Cancel) before enqueuing;
+ *  the other values apply silently. The main-process manager only ever receives
+ *  a resolved policy ("overwrite" | "skip" | "rename"), never "ask". */
+export type ConflictPolicy = "ask" | "overwrite" | "skip" | "rename";
 
 /** Lifecycle of a transfer task. */
 export type TransferStatus =
@@ -165,6 +211,12 @@ export interface TransferTask {
   bytesPerSec: number;
   /** Estimated seconds remaining, or null when unknown. */
   etaSeconds: number | null;
+  /** Whether this transfer can be paused (false for protocols like FTP that
+   *  have no mid-transfer pause). Absent is treated as pausable. */
+  pausable?: boolean;
+  /** Human label for the mechanism moving the bytes, shown in the queue:
+   *  "SFTP", "rsync", "WebDAV", or "FTP/FTPS". */
+  transferMethod?: string;
   /** Populated when status === "error". */
   error?: string;
 }

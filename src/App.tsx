@@ -5,6 +5,7 @@ import { SiteEditorDialog } from "./components/SiteEditorDialog";
 import { HostKeyDialog } from "./components/HostKeyDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ConflictDialog, type ConflictChoice } from "./components/ConflictDialog";
 import { FilePane, type PaneOps } from "./components/FilePane";
 import { TransferQueue } from "./components/TransferQueue";
 import { SettingsIcon, PlusIcon, ConnectIcon, TrashIcon, RenameIcon } from "./components/Icons";
@@ -30,6 +31,18 @@ export function App() {
   const [tasks, setTasks] = useState<Map<string, import("./shared/types").TransferTask>>(new Map());
   const [paths, setPaths] = useState<{ local: string; remote: string }>({ local: "", remote: "" });
 
+  // A transfer batch awaiting a conflict decision (policy "ask" + collisions).
+  interface PendingBatch {
+    direction: "upload" | "download";
+    destDir: string;
+    fromSep: string;
+    fromDir: string;
+    entries: import("./shared/types").FsEntry[];
+    /** Names in the batch that already exist at the destination. */
+    conflictNames: string[];
+  }
+  const [pendingBatch, setPendingBatch] = useState<PendingBatch | null>(null);
+
   const refreshSites = useCallback(async () => {
     setSites(await window.transferJaguar.listSites());
   }, []);
@@ -47,6 +60,11 @@ export function App() {
       });
     });
     return unsub;
+  }, []);
+
+  // Surface transient transfer notices (e.g. rsync fallback) as a toast.
+  useEffect(() => {
+    return window.transferJaguar.onTransferNotice((message) => setToast(message));
   }, []);
 
   // Open Settings when chosen from the native menu.
@@ -164,8 +182,47 @@ export function App() {
     setPaths((prev) => ({ ...prev, [s]: p }));
   }, []);
 
+  /** Enqueue every entry of a batch with an already-resolved conflict policy
+   *  ("overwrite" | "skip" | "rename"). Records one request gesture per batch. */
+  const enqueueResolved = useCallback(
+    async (
+      direction: "upload" | "download",
+      fromDir: string,
+      fromSep: string,
+      destDir: string,
+      entries: import("./shared/types").FsEntry[],
+      policy: "overwrite" | "skip" | "rename"
+    ) => {
+      if (!session || entries.length === 0) return;
+      // One transfer request per user gesture (a multi-select counts as one).
+      void window.transferJaguar.recordTransferRequest();
+      for (const entry of entries) {
+        const sourcePath =
+          fromDir.replace(new RegExp(`${fromSep === "\\" ? "\\\\" : fromSep}+$`), "") + fromSep + entry.name;
+        try {
+          await window.transferJaguar.transferEnqueue({
+            sessionId: session.sessionId,
+            direction,
+            sourcePath,
+            destDir,
+            name: entry.name,
+            isDirectory: entry.kind === "directory",
+            conflictPolicy: policy,
+            verifyChecksum: !!settings?.verifyChecksum,
+          });
+        } catch (e) {
+          setToast(e instanceof Error ? e.message : "Could not start the transfer.");
+        }
+      }
+    },
+    [session, settings]
+  );
+
   /** Enqueue a transfer of `entries` from `fromSide`/`fromDir` to the opposite
-   *  pane's current directory. */
+   *  pane's current directory. When the conflict policy is "ask", check the
+   *  destination for name collisions across the whole batch and, if any exist,
+   *  show a single Replace / Keep both / Cancel prompt whose choice applies to
+   *  every conflicting item (Cancel aborts the whole batch). */
   const enqueueTransfer = useCallback(
     async (fromSide: "local" | "remote", fromDir: string, entries: import("./shared/types").FsEntry[]) => {
       if (!session) {
@@ -180,27 +237,48 @@ export function App() {
       }
       const fromSep = fromSide === "local" ? localSep : "/";
       if (entries.length === 0) return;
-      // One transfer request per user gesture (a multi-select counts as one).
-      void window.transferJaguar.recordTransferRequest();
-      for (const entry of entries) {
-        const sourcePath = fromDir.replace(new RegExp(`${fromSep === "\\" ? "\\\\" : fromSep}+$`), "") + fromSep + entry.name;
-        try {
-          await window.transferJaguar.transferEnqueue({
-            sessionId: session.sessionId,
-            direction,
-            sourcePath,
-            destDir,
-            name: entry.name,
-            isDirectory: entry.kind === "directory",
-            conflictPolicy: settings?.conflictPolicy ?? "rename",
-            verifyChecksum: !!settings?.verifyChecksum,
-          });
-        } catch (e) {
-          setToast(e instanceof Error ? e.message : "Could not start the transfer.");
-        }
+
+      const policy = settings?.conflictPolicy ?? "ask";
+      if (policy !== "ask") {
+        await enqueueResolved(direction, fromDir, fromSep, destDir, entries, policy);
+        return;
       }
+
+      // "ask": list the destination and find which batch names already exist.
+      let existing: Set<string>;
+      try {
+        const listing =
+          direction === "upload"
+            ? await window.transferJaguar.remoteList(session.sessionId, destDir)
+            : await window.transferJaguar.localList(destDir);
+        existing = new Set(listing.entries.map((e) => e.name));
+      } catch {
+        // Can't read the destination (e.g. it doesn't exist yet) — no conflicts.
+        existing = new Set();
+      }
+      const conflictNames = entries.filter((e) => existing.has(e.name)).map((e) => e.name);
+      if (conflictNames.length === 0) {
+        // Nothing collides; "rename" is a no-op here (each item keeps its name).
+        await enqueueResolved(direction, fromDir, fromSep, destDir, entries, "rename");
+        return;
+      }
+      // Defer to the user via the conflict dialog.
+      setPendingBatch({ direction, destDir, fromSep, fromDir, entries, conflictNames });
     },
-    [session, paths, localSep, settings]
+    [session, paths, localSep, settings, enqueueResolved]
+  );
+
+  /** Resolve the pending batch's conflict prompt. Cancel aborts the whole batch. */
+  const resolvePendingBatch = useCallback(
+    (choice: ConflictChoice) => {
+      const batch = pendingBatch;
+      setPendingBatch(null);
+      if (!batch || choice === "cancel") return; // Cancel = abort the entire batch.
+      // "overwrite" | "skip" | "rename" all map straight through: with "skip",
+      // duplicate items are skipped while non-duplicates still transfer.
+      void enqueueResolved(batch.direction, batch.fromDir, batch.fromSep, batch.destDir, batch.entries, choice);
+    },
+    [pendingBatch, enqueueResolved]
   );
 
   // When a task finishes, bump the destination pane's reload key so it re-lists.
@@ -236,7 +314,17 @@ export function App() {
               <div key={s.id} className={"site-item" + (session?.site.id === s.id ? " active" : "")}>
                 <div className="site-main" onDoubleClick={() => void connect(s)}>
                   <div className="site-name">{s.name}</div>
-                  <div className="site-sub">{s.username}@{s.host}:{s.port}</div>
+                  <div className="site-sub">
+                    {s.protocol === "webdav"
+                      ? s.baseUrl ?? "WebDAV"
+                      : s.protocol === "dropbox"
+                        ? s.dropboxAccount ?? "Dropbox"
+                        : s.protocol === "onedrive"
+                          ? s.onedriveAccount ?? "OneDrive"
+                          : s.protocol === "gdrive"
+                            ? s.gdriveAccount ?? "Google Drive"
+                            : `${s.username}@${s.host}:${s.port}`}
+                  </div>
                 </div>
                 <div className="site-actions">
                   <button
@@ -272,7 +360,17 @@ export function App() {
           <span style={{ flex: 1 }} />
           {session && (
             <>
-              <span className="muted">{session.site.username}@{session.site.host}</span>
+              <span className="muted">
+                {session.site.protocol === "webdav"
+                  ? session.site.baseUrl ?? session.site.name
+                  : session.site.protocol === "dropbox"
+                    ? session.site.dropboxAccount ?? "Dropbox"
+                    : session.site.protocol === "onedrive"
+                      ? session.site.onedriveAccount ?? "OneDrive"
+                      : session.site.protocol === "gdrive"
+                        ? session.site.gdriveAccount ?? "Google Drive"
+                        : `${session.site.username}@${session.site.host}`}
+              </span>
               {connState === "reconnecting" && <span className="conn-reconnecting">reconnecting…</span>}
               <button className="secondary" onClick={() => void disconnect()}>Disconnect</button>
             </>
@@ -404,6 +502,13 @@ export function App() {
             setCancelConfirm(null);
           }}
           onCancel={() => setCancelConfirm(null)}
+        />
+      )}
+      {pendingBatch && (
+        <ConflictDialog
+          names={pendingBatch.conflictNames}
+          destDir={pendingBatch.destDir}
+          onChoose={resolvePendingBatch}
         />
       )}
       {toast && <div className="toast">{toast}</div>}

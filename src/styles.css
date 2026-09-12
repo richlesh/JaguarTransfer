@@ -130,6 +130,21 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
 .queue-status { color: var(--muted); font-size: 12px; }
 .queue-controls { margin-left: auto; display: flex; gap: 6px; }
 .queue-item-meta { display: flex; gap: 14px; margin-top: 4px; color: var(--muted); font-size: 12px; }
+/* Percent field: right-aligned, fixed width for up to 3 digits + '%' (i.e.
+   "100%"), with tabular figures so the row doesn't jitter as the value grows. */
+.queue-item-meta .queue-pct {
+  display: inline-block;
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.queue-item-meta .queue-method {
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 
 .progress {
   height: 6px;
@@ -145,6 +160,13 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
 .progress-bar.canceled { background: var(--muted); }
 
 .pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Active-pane focus ring: shows when focus is anywhere inside the pane (the
+   file list is focusable for type-to-select). Use `outline`, not box-shadow:
+   the pane's children (toolbar, path bar, list) have opaque backgrounds and
+   would paint over an inset box-shadow's top/bottom edges. An outline is drawn
+   above descendant content on all four sides. A small negative offset keeps it
+   just inside the pane so the parent's overflow:hidden can't clip it. */
+.pane:focus-within { outline: 2px solid var(--accent, #4a90d9); outline-offset: -2px; border-radius: 4px; }
 .pane-toolbar {
   display: flex;
   align-items: center;
@@ -165,6 +187,12 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
   background: var(--panel);
 }
 .pane-list { overflow: auto; flex: 1; min-height: 80px; }
+.pane-list:focus { outline: none; }
+/* Focus ring for the file list (it captures keystrokes for type-to-select).
+   Applied to the whole .pane via :focus-within rather than the .pane-list
+   itself: the list is a scroll container with an opaque sticky table header at
+   top:0, which would paint over an inset ring's top edge. Ringing the pane
+   avoids that clipping and clearly marks which pane is active. */
 
 .file-table { width: 100%; border-collapse: collapse; }
 .file-table th, .file-table td {
@@ -309,6 +337,15 @@ button.icon-btn:disabled { opacity: 0.4; }
   padding-left: 12px;
   margin: 0 0 10px 4px;
 }
+.rsync-section {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin: 0 0 10px 4px;
+}
+.dropbox-connect { display: flex; align-items: center; gap: 10px; }
+.dropbox-status { font-size: 13px; color: var(--muted); }
+.dropbox-status.connected { color: var(--accent); font-weight: 600; }
+.field-hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; }
 
 /* Dialogs */
 .dialog-backdrop {
@@ -333,6 +370,40 @@ button.icon-btn:disabled { opacity: 0.4; }
 .dialog p { color: var(--muted); line-height: 1.5; margin-bottom: 10px; }
 .dialog p.warn { color: var(--danger); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+/* Footer variant with an action on the left (Test Connection) and the primary
+   actions grouped on the right. */
+.dialog-actions.split { justify-content: space-between; align-items: center; }
+.dialog-actions-right { display: flex; gap: 8px; }
+
+/* Inline Test Connection result feedback. */
+.test-result { font-size: 13px; margin-top: 8px; word-break: break-word; }
+.test-result.ok { color: var(--accent, #0a84ff); }
+.test-result.fail { color: var(--danger); }
+
+/* Inline warning box (e.g. insecure plain-FTP notice). */
+.warn-box {
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 4px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.conflict-list {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 8px 28px;
+  margin: 6px 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.conflict-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .fingerprint {
   background: var(--bg);

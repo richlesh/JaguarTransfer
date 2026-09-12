@@ -13,6 +13,9 @@ const api: TransferJaguarApi = {
   listSites: () => ipcRenderer.invoke(IPC.listSites),
   saveSite: (input: SiteInput) => ipcRenderer.invoke(IPC.saveSite, input),
   deleteSite: (id: string) => ipcRenderer.invoke(IPC.deleteSite, id),
+  testConnection: (input: SiteInput) => ipcRenderer.invoke(IPC.testConnection, input),
+  pickFile: (options?: { title?: string; defaultPath?: string }) => ipcRenderer.invoke(IPC.pickFile, options),
+  oauthConnect: (siteId: string) => ipcRenderer.invoke(IPC.oauthConnect, siteId),
 
   connect: (siteId: string) => ipcRenderer.invoke(IPC.connect, siteId),
   disconnect: (sessionId: string) => ipcRenderer.invoke(IPC.disconnect, sessionId),
@@ -42,6 +45,11 @@ const api: TransferJaguarApi = {
     const listener = (_e: unknown, task: TransferTask) => cb(task);
     ipcRenderer.on(IPC.transferProgress, listener);
     return () => ipcRenderer.removeListener(IPC.transferProgress, listener);
+  },
+  onTransferNotice: (cb: (message: string) => void) => {
+    const listener = (_e: unknown, message: string) => cb(message);
+    ipcRenderer.on(IPC.transferNotice, listener);
+    return () => ipcRenderer.removeListener(IPC.transferNotice, listener);
   },
   onOpenSettings: (cb: () => void) => {
     const listener = () => cb();

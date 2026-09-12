@@ -12,6 +12,19 @@ import type {
   ConnectionStateEvent,
 } from "./types";
 
+/** Outcome of a "Test Connection" attempt with unsaved form values. */
+export type TestConnectionResult =
+  | { ok: true; detail?: string }
+  /** Reachable, but the SSH host key isn't trusted yet (TOFU). Treated as a
+   *  soft pass: the server answered, trust is decided on the real connect. */
+  | { ok: true; hostKeyUntrusted: true; detail: string }
+  | { ok: false; error: string };
+
+/** Outcome of an OAuth "Connect" flow (Dropbox / OneDrive). */
+export type OAuthConnectResult =
+  | { ok: true; account: string | null }
+  | { ok: false; error: string };
+
 /** App-level settings persisted to ~/.transferjaguar-settings.json. */
 export interface AppSettings {
   theme: "light" | "dark";
@@ -20,8 +33,9 @@ export interface AppSettings {
   showHiddenFiles?: boolean;
   /** Where directories appear in the file list relative to files. Default "top". */
   directorySort?: "top" | "inline" | "bottom";
-  /** Default conflict policy when a transfer destination exists. Default "rename". */
-  conflictPolicy?: "overwrite" | "skip" | "rename";
+  /** Default conflict policy when a transfer destination exists. Default "ask"
+   *  (prompt the user: Replace / Keep both / Cancel). */
+  conflictPolicy?: "ask" | "overwrite" | "skip" | "rename";
   /** Verify each transferred file with a SHA-256 checksum (needs sha256sum on the
    *  server; best-effort). Default off. */
   verifyChecksum?: boolean;
@@ -45,6 +59,15 @@ export interface TransferJaguarApi {
   listSites(): Promise<Site[]>;
   saveSite(input: SiteInput): Promise<Site>;
   deleteSite(id: string): Promise<void>;
+  /** Try connecting with the given (unsaved) form values. Persists nothing:
+   *  any provided secret is used for the attempt only and not stored. */
+  testConnection(input: SiteInput): Promise<TestConnectionResult>;
+  /** Open a native file picker and return the chosen absolute path, or null if
+   *  canceled. Used e.g. to locate the rsync executable. */
+  pickFile(options?: { title?: string; defaultPath?: string }): Promise<string | null>;
+  /** Run the OAuth consent flow for a (saved) OAuth site (Dropbox / OneDrive)
+   *  and store its tokens. Returns the connected account label on success. */
+  oauthConnect(siteId: string): Promise<OAuthConnectResult>;
 
   // Connection lifecycle
   connect(siteId: string): Promise<ConnectResult>;
@@ -78,6 +101,9 @@ export interface TransferJaguarApi {
   recordTransferRequest(): Promise<void>;
   /** Subscribe to per-task progress updates. Returns an unsubscribe function. */
   onTransferProgress(cb: (task: TransferTask) => void): () => void;
+  /** Subscribe to transient transfer notices (e.g. "rsync failed, using the
+   *  built-in transfer"). Returns an unsubscribe function. */
+  onTransferNotice(cb: (message: string) => void): () => void;
 
   /** Fired when the user picks Settings from the native menu. Returns unsubscribe. */
   onOpenSettings(cb: () => void): () => void;
@@ -96,6 +122,9 @@ export const IPC = {
   listSites: "sites:list",
   saveSite: "sites:save",
   deleteSite: "sites:delete",
+  testConnection: "sites:test",
+  pickFile: "app:pick-file",
+  oauthConnect: "oauth:connect",
   connect: "conn:connect",
   disconnect: "conn:disconnect",
   hostkeyTrust: "hostkey:trust",
@@ -117,6 +146,8 @@ export const IPC = {
   recordTransferRequest: "transfer:recordRequest",
   /** main → renderer push channel for progress updates. */
   transferProgress: "transfer:progress",
+  /** main → renderer: transient transfer notice (e.g. rsync fallback). */
+  transferNotice: "transfer:notice",
   /** main → renderer: open the Settings dialog (from the native menu). */
   openSettings: "open-settings",
   /** main → renderer: SSH connection-state changes. */

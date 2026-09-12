@@ -13,11 +13,17 @@ import {
   uploadFile,
   ensureRemoteDir,
   readdirDetailed,
-  localSize,
   remoteSize,
   remoteSha256,
-  type TransferControl,
-} from "../sftp/engine.js";
+  capabilitiesFor,
+  isRsyncActive,
+  disableRsyncForSession,
+  protocolFor,
+  downloadFileStream,
+  uploadFileStream,
+} from "../backend/registry.js";
+import { localSize } from "../sftp/engine.js";
+import type { TransferControl } from "../backend/types.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 
@@ -80,13 +86,16 @@ interface Task {
 }
 
 type Emit = (task: TransferTask) => void;
+type Notify = (message: string) => void;
 
 const tasks = new Map<string, Task>();
 let emit: Emit = () => {};
+let notify: Notify = () => {};
 let maxConcurrentFiles = 4;
 
-export function configureManager(opts: { emit: Emit; maxConcurrentFiles?: number }): void {
+export function configureManager(opts: { emit: Emit; notify?: Notify; maxConcurrentFiles?: number }): void {
   emit = opts.emit;
+  if (opts.notify) notify = opts.notify;
   if (opts.maxConcurrentFiles && opts.maxConcurrentFiles > 0) maxConcurrentFiles = opts.maxConcurrentFiles;
 }
 
@@ -108,12 +117,49 @@ function toPublic(t: Task): TransferTask {
     filesDone,
     bytesPerSec: t.status === "running" ? t.bytesPerSec : 0,
     etaSeconds: t.status === "running" ? etaSeconds(totalBytes, transferredBytes, t.bytesPerSec) : null,
+    pausable: capabilitiesFor(t.sessionId)?.pausable !== false,
+    transferMethod: transferMethodLabel(t.sessionId),
     error: t.error,
   };
 }
 
 function publish(t: Task): void {
   emit(toPublic(t));
+}
+
+/** Human label for the mechanism moving a task's bytes, for the queue UI.
+ *  SFTP distinguishes rsync from the built-in/fallback path; other protocols
+ *  use their own name. */
+function transferMethodLabel(sessionId: string): string {
+  switch (protocolFor(sessionId)) {
+    case "webdav":
+      return "WebDAV";
+    case "ftp":
+      return "FTP/FTPS";
+    case "dropbox":
+      return "Dropbox";
+    case "onedrive":
+      return "OneDrive";
+    case "gdrive":
+      return "Google Drive";
+    case "sftp":
+    default:
+      // rsync when active for this session; otherwise the built-in SFTP path
+      // (this also reflects the automatic fallback, which disables rsync).
+      return isRsyncActive(sessionId) ? "rsync" : "SFTP";
+  }
+}
+
+/** Emit a one-time notice when rsync isn't working and we switch a session to
+ *  the built-in transfer. Deduped so a multi-file task doesn't spam the toast. */
+let rsyncFallbackNotified = false;
+function notifyRsyncFallback(err: unknown): void {
+  if (rsyncFallbackNotified) return;
+  rsyncFallbackNotified = true;
+  const reason = err instanceof Error ? err.message : String(err);
+  // Reassuring wording: the transfer still proceeds via the built-in path.
+  notify(`Using the built-in transfer for this connection (rsync unavailable: ${reason})`);
+  setTimeout(() => { rsyncFallbackNotified = false; }, 10000);
 }
 
 /** Recompute throughput EMA from cumulative transferred bytes. */
@@ -212,6 +258,10 @@ async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> 
   // Determine a resume offset: if a partial destination exists and is smaller
   // than the source, continue from its size. If it's already the full size,
   // treat the file as done (idempotent). Overwrite policy forces a fresh start.
+  // Resume is also gated by the backend's capabilities: some protocols (WebDAV)
+  // can't resume uploads, so those always restart from 0.
+  const caps = capabilitiesFor(t.sessionId);
+  const canResume = t.direction === "download" ? caps?.resumeDownload !== false : caps?.resumeUpload === true;
   let startOffset = 0;
   if (t.conflictPolicy !== "overwrite" && f.sizeBytes > 0) {
     const destSize =
@@ -225,7 +275,7 @@ async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> 
       publish(t);
       return "completed";
     }
-    if (destSize > 0) startOffset = destSize; // resume from the partial
+    if (destSize > 0 && canResume) startOffset = destSize; // resume from the partial
   }
 
   if (t.direction === "download") {
@@ -234,10 +284,19 @@ async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> 
     await ensureRemoteDir(t.sessionId, dirname(f.dest).split(/[\\/]/).join("/"));
   }
   f.done = startOffset;
-  const control =
-    t.direction === "download"
-      ? downloadFile(t.sessionId, f.source, f.dest, onBytes, startOffset)
+  const usingRsync = isRsyncActive(t.sessionId);
+  const makeControl = (forceStream: boolean): TransferControl => {
+    if (t.direction === "download") {
+      return forceStream
+        ? downloadFileStream(t.sessionId, f.source, f.dest, onBytes, startOffset)
+        : downloadFile(t.sessionId, f.source, f.dest, onBytes, startOffset);
+    }
+    return forceStream
+      ? uploadFileStream(t.sessionId, f.source, f.dest, onBytes, startOffset)
       : uploadFile(t.sessionId, f.source, f.dest, onBytes, startOffset);
+  };
+
+  let control = makeControl(false);
 
   // Register so pause()/cancel() reach the in-flight stream immediately.
   t.activeControls.add(control);
@@ -245,12 +304,35 @@ async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> 
   if (t.cancelRequested) control.cancel();
 
   try {
-    const result = await control.done;
+    let result: "completed" | "canceled";
+    try {
+      result = await control.done;
+    } catch (err) {
+      // When rsync was in use and failed (not a user cancel), fall back to the
+      // built-in stream transfer for this file and notify the user once.
+      if (usingRsync && !t.cancelRequested) {
+        t.activeControls.delete(control);
+        notifyRsyncFallback(err);
+        // Persistent condition (e.g. rejected key): stop trying rsync for this
+        // session so later files go straight to the built-in path (faster, quiet).
+        disableRsyncForSession(t.sessionId);
+        f.done = startOffset;
+        control = makeControl(true);
+        t.activeControls.add(control);
+        if (t.pauseRequested) control.pause();
+        if (t.cancelRequested) control.cancel();
+        result = await control.done;
+      } else {
+        throw err;
+      }
+    }
     if (result === "completed") {
       f.done = f.sizeBytes;
-      // Optional post-transfer integrity check (best-effort; needs sha256sum
-      // on the server). A mismatch fails the whole task.
-      if (t.verifyChecksum) {
+      // Optional post-transfer integrity check (best-effort; needs a server-side
+      // hash). Only backends that advertise the checksum capability run it
+      // (e.g. SFTP via sha256sum); WebDAV has none, so it's skipped. A mismatch
+      // fails the whole task.
+      if (t.verifyChecksum && caps?.checksum) {
         const localPath = t.direction === "download" ? f.dest : f.source;
         const remotePath = t.direction === "download" ? f.source : f.dest;
         const remoteHash = await remoteSha256(t.sessionId, remotePath);
@@ -337,7 +419,7 @@ export async function enqueue(req: TransferRequest): Promise<string> {
     pauseRequested: false,
     activeControls: new Set(),
     runActive: false,
-    conflictPolicy: req.conflictPolicy ?? "rename",
+    conflictPolicy: req.conflictPolicy && req.conflictPolicy !== "ask" ? req.conflictPolicy : "rename",
     verifyChecksum: !!req.verifyChecksum,
   };
   tasks.set(id, t);
@@ -418,6 +500,8 @@ export function cancel(id: string): void {
 export function pause(id: string): void {
   const t = tasks.get(id);
   if (!t || t.status !== "running") return;
+  // Backends without mid-transfer pause (e.g. FTP) can't honor this; ignore.
+  if (capabilitiesFor(t.sessionId)?.pausable === false) return;
   t.pauseRequested = true;
   // Pause the in-flight streams so bytes stop flowing right away.
   for (const c of t.activeControls) c.pause();

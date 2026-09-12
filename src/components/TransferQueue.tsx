@@ -68,7 +68,7 @@ export function TransferQueue({ tasks, onCancel, onPause, onResume, onClearFinis
                   <span className="queue-name" title={`${t.sourcePath} → ${t.destPath}`}>{t.name}</span>
                   <span className="queue-status">{STATUS_LABEL[t.status]}</span>
                   <span className="queue-controls">
-                    {t.status === "running" && (
+                    {t.status === "running" && t.pausable !== false && (
                       <button className="secondary tiny" onClick={() => onPause(t.id)}>Pause</button>
                     )}
                     {t.status === "paused" && (
@@ -83,8 +83,9 @@ export function TransferQueue({ tasks, onCancel, onPause, onResume, onClearFinis
                   <div className={"progress-bar " + t.status} style={{ width: `${pct}%` }} />
                 </div>
                 <div className="queue-item-meta">
-                  <span>{pct}%</span>
+                  <span className="queue-pct">{Math.round(pct)}%</span>
                   <span>{fmtBytes(t.transferredBytes)} / {fmtBytes(t.totalBytes)}</span>
+                  {t.transferMethod && <span className="queue-method">{t.transferMethod}</span>}
                   {t.fileCount > 1 && <span>{t.filesDone}/{t.fileCount} files</span>}
                   {t.status === "running" && <span>{fmtRate(t.bytesPerSec)}</span>}
                   {t.status === "running" && t.etaSeconds != null && <span>ETA {fmtEta(t.etaSeconds)}</span>}
