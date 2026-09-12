@@ -96,6 +96,7 @@ body {
 .pane-divider { background: var(--border); }
 
 .pane-title { font-weight: 700; margin-right: auto; }
+.conn-reconnecting { color: #f2994a; font-size: 12px; font-weight: 600; }
 .danger-text { color: var(--danger); }
 .file-table tr.selected { background: var(--row-selected) !important; }
 

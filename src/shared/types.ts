@@ -59,6 +59,14 @@ export type RemoteListing = FsListing;
 /** Connection lifecycle state surfaced to the UI. */
 export type ConnectionState = "idle" | "connecting" | "verifying-hostkey" | "connected" | "error";
 
+/** A connection-state change pushed to the renderer for a session. */
+export interface ConnectionStateEvent {
+  sessionId: string;
+  state: "connected" | "reconnecting" | "disconnected";
+  /** Human-readable detail (e.g. an error or "attempt 3"). */
+  detail?: string;
+}
+
 /** Result of attempting to connect. */
 export type ConnectResult =
   | { ok: true; sessionId: string; cwd: string }

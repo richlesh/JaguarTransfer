@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { registerIpcHandlers } from "../ipc/handlers.js";
 import { buildMenu, showSplash, registerDialogIpc, isLicensed } from "../dialogs.js";
 import { loadSettings, saveSettings } from "../settings.js";
-import { disconnectAll } from "../sftp/engine.js";
+import { disconnectAll, onConnectionState } from "../sftp/engine.js";
 import { configureManager, hasActiveTransfers, cancelAll } from "../transfer/manager.js";
 import { IPC } from "../../src/shared/ipc.js";
 
@@ -79,6 +79,11 @@ function createWindow(): void {
       if (!win.isDestroyed()) win.webContents.send(IPC.transferProgress, task);
     },
     maxConcurrentFiles: loadSettings().maxConcurrentTransfers,
+  });
+
+  // Route SSH connection-state changes (auto-reconnect) to the renderer.
+  onConnectionState((ev) => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.connectionState, ev);
   });
 
   // Persist window bounds (debounced) so they restore next launch.

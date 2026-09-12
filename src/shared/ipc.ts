@@ -9,6 +9,7 @@ import type {
   HostKeyPrompt,
   TransferRequest,
   TransferTask,
+  ConnectionStateEvent,
 } from "./types";
 
 /** App-level settings persisted to ~/.transferjaguar-settings.json. */
@@ -81,6 +82,9 @@ export interface TransferJaguarApi {
   /** Fired when the user picks Settings from the native menu. Returns unsubscribe. */
   onOpenSettings(cb: () => void): () => void;
 
+  /** Subscribe to SSH connection-state changes (reconnecting/connected/dropped). */
+  onConnectionState(cb: (e: ConnectionStateEvent) => void): () => void;
+
   // Utilities
   openExternal(url: string): Promise<void>;
 }
@@ -115,5 +119,7 @@ export const IPC = {
   transferProgress: "transfer:progress",
   /** main → renderer: open the Settings dialog (from the native menu). */
   openSettings: "open-settings",
+  /** main → renderer: SSH connection-state changes. */
+  connectionState: "conn:state",
   openExternal: "app:open-external",
 } as const;

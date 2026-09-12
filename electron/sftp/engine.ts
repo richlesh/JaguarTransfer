@@ -17,9 +17,21 @@ interface Session {
   site: Site;
   client: Client;
   sftp: SFTPWrapper;
+  /** Set when the user explicitly disconnected — suppresses auto-reconnect. */
+  userClosed: boolean;
+  /** True while a reconnect loop is running. */
+  reconnecting: boolean;
 }
 
 const sessions = new Map<string, Session>();
+
+import type { ConnectionStateEvent } from "../../src/shared/types.js";
+
+let onConnState: (e: ConnectionStateEvent) => void = () => {};
+/** Register a listener for connection-state changes (wired to webContents.send). */
+export function onConnectionState(cb: (e: ConnectionStateEvent) => void): void {
+  onConnState = cb;
+}
 
 /** OpenSSH-style SHA-256 fingerprint (base64, no padding) of a host key. */
 function fingerprintSha256(key: Buffer): string {
@@ -99,6 +111,7 @@ export function connect(site: Site): Promise<EngineConnectResult> {
       return;
     }
 
+    let pendingPrompt: HostKeyPrompt | null = null;
     const config: ConnectConfig = {
       host: site.host,
       port: site.port || 22,
@@ -108,8 +121,6 @@ export function connect(site: Site): Promise<EngineConnectResult> {
       tryKeyboard: site.authMethod === "password",
       ...(site.compression ? { algorithms: { compress: ["zlib@openssh.com", "zlib", "none"] } } : {}),
       ...auth,
-      // TOFU host-key verification. Returning false rejects the connection; we
-      // signal the specific reason via the closure below.
       hostVerifier: (keyBuf: Buffer) => {
         const fp = fingerprintSha256(keyBuf);
         const status = verifyHostKey(site.host, site.port || 22, fp);
@@ -121,14 +132,10 @@ export function connect(site: Site): Promise<EngineConnectResult> {
           fingerprintSha256: fp,
           changed: status === "changed",
         };
-        return false; // triggers the 'error' event; we translate it below
+        return false;
       },
     };
 
-    let pendingPrompt: HostKeyPrompt | null = null;
-
-    // keyboard-interactive: answer prompts with the stored password (covers
-    // servers that only offer keyboard-interactive, and simple OTP prompts).
     client.on("keyboard-interactive", (_name, _instr, _lang, _prompts, finish) => {
       const secret = getSecret(site.id) ?? "";
       finish([secret]);
@@ -142,12 +149,13 @@ export function connect(site: Site): Promise<EngineConnectResult> {
           return;
         }
         const id = randomUUID();
-        sessions.set(id, { id, site, client, sftp });
+        const session: Session = { id, site, client, sftp, userClosed: false, reconnecting: false };
+        sessions.set(id, session);
+        attachDropHandler(session);
         const start = site.startDir?.trim();
         if (start) {
           done({ ok: true, sessionId: id, cwd: start });
         } else {
-          // Resolve the server's default (home) directory.
           sftp.realpath(".", (rpErr, abs) => {
             done({ ok: true, sessionId: id, cwd: rpErr ? "/" : abs });
           });
@@ -171,6 +179,105 @@ export function connect(site: Site): Promise<EngineConnectResult> {
   });
 }
 
+/** Build the ssh2 connect config for a site (host key already trusted on
+ *  reconnect; hostVerifier just re-confirms the trusted fingerprint). */
+function buildConfig(site: Site): ConnectConfig {
+  return {
+    host: site.host,
+    port: site.port || 22,
+    username: site.username,
+    readyTimeout: 20000,
+    keepaliveInterval: 15000,
+    tryKeyboard: site.authMethod === "password",
+    ...(site.compression ? { algorithms: { compress: ["zlib@openssh.com", "zlib", "none"] } } : {}),
+    ...buildAuth(site),
+    hostVerifier: (keyBuf: Buffer) =>
+      verifyHostKey(site.host, site.port || 22, fingerprintSha256(keyBuf)) === "trusted",
+  };
+}
+
+/** Attach a one-shot drop handler that triggers auto-reconnect on an unexpected
+ *  close/error (not a user disconnect). */
+function attachDropHandler(session: Session): void {
+  const onDrop = () => {
+    if (session.userClosed || session.reconnecting) return;
+    if (!sessions.has(session.id)) return;
+    void reconnect(session);
+  };
+  session.client.once("close", onDrop);
+  session.client.once("error", onDrop);
+}
+
+/** Reconnect a dropped session with exponential backoff, reusing the site + its
+ *  trusted host key, and swap in the fresh client/sftp under the same id. */
+async function reconnect(session: Session): Promise<void> {
+  session.reconnecting = true;
+  const delays = [1000, 2000, 4000, 8000, 15000, 15000]; // backoff, capped
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    if (session.userClosed || !sessions.has(session.id)) {
+      session.reconnecting = false;
+      return;
+    }
+    onConnState({ sessionId: session.id, state: "reconnecting", detail: `attempt ${attempt + 1}` });
+    await new Promise((r) => setTimeout(r, delays[attempt]));
+    if (session.userClosed || !sessions.has(session.id)) {
+      session.reconnecting = false;
+      return;
+    }
+    const ok = await tryReestablish(session);
+    if (ok) {
+      session.reconnecting = false;
+      attachDropHandler(session); // re-arm for the next drop
+      onConnState({ sessionId: session.id, state: "connected" });
+      return;
+    }
+  }
+  // Exhausted attempts: give up and drop the session.
+  session.reconnecting = false;
+  onConnState({ sessionId: session.id, state: "disconnected", detail: "reconnect failed" });
+  sessions.delete(session.id);
+}
+
+/** One reconnection attempt: open a fresh client + SFTP and swap into `session`. */
+function tryReestablish(session: Session): Promise<boolean> {
+  return new Promise((resolve) => {
+    let config: ConnectConfig;
+    try {
+      config = buildConfig(session.site);
+    } catch {
+      resolve(false);
+      return;
+    }
+    const client = new Client();
+    let settled = false;
+    const finish = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    client.on("keyboard-interactive", (_n, _i, _l, _p, cb) => cb([getSecret(session.site.id) ?? ""]));
+    client.on("ready", () => {
+      client.sftp((err, sftp) => {
+        if (err) {
+          client.end();
+          return finish(false);
+        }
+        // Swap the live handles under the same session id.
+        try { session.client.removeAllListeners(); } catch { /* noop */ }
+        session.client = client;
+        session.sftp = sftp;
+        finish(true);
+      });
+    });
+    client.on("error", () => finish(false));
+    try {
+      client.connect(config);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 /** Best-effort host key type from the raw key blob (starts with the algorithm name). */
 function detectKeyType(keyBuf: Buffer): string {
   // SSH wire format: uint32 length, then the algorithm name string.
@@ -185,6 +292,7 @@ function detectKeyType(keyBuf: Buffer): string {
 export function disconnect(sessionId: string): void {
   const s = sessions.get(sessionId);
   if (!s) return;
+  s.userClosed = true; // suppress auto-reconnect for an intentional disconnect
   try {
     s.client.end();
   } catch {

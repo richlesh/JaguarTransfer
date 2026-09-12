@@ -54,6 +54,21 @@ export function App() {
     return window.transferJaguar.onOpenSettings(() => setShowSettings(true));
   }, []);
 
+  // Reflect SSH connection state (auto-reconnect) in a small banner + toast.
+  const [connState, setConnState] = useState<"connected" | "reconnecting" | "disconnected" | null>(null);
+  useEffect(() => {
+    return window.transferJaguar.onConnectionState((ev) => {
+      if (!session || ev.sessionId !== session.sessionId) return;
+      setConnState(ev.state);
+      if (ev.state === "reconnecting") setToast(`Connection lost — reconnecting… (${ev.detail ?? ""})`);
+      else if (ev.state === "connected") setToast("Reconnected.");
+      else if (ev.state === "disconnected") {
+        setToast(`Disconnected${ev.detail ? ` — ${ev.detail}` : ""}.`);
+        setSession(null);
+      }
+    });
+  }, [session]);
+
   useEffect(() => {
     void refreshSites();
     void window.transferJaguar.localHome().then(setLocalHome);
@@ -258,6 +273,7 @@ export function App() {
           {session && (
             <>
               <span className="muted">{session.site.username}@{session.site.host}</span>
+              {connState === "reconnecting" && <span className="conn-reconnecting">reconnecting…</span>}
               <button className="secondary" onClick={() => void disconnect()}>Disconnect</button>
             </>
           )}

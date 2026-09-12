@@ -13,3 +13,4 @@ license.js
 *.acorn
 badge.png
 license.cjs
+generate*.py

@@ -4,7 +4,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../../src/shared/ipc.js";
 import type { AppSettings, TransferJaguarApi } from "../../src/shared/ipc.js";
-import type { SiteInput, HostKeyPrompt, TransferRequest, TransferTask } from "../../src/shared/types.js";
+import type { SiteInput, HostKeyPrompt, TransferRequest, TransferTask, ConnectionStateEvent } from "../../src/shared/types.js";
 
 const api: TransferJaguarApi = {
   getSettings: () => ipcRenderer.invoke(IPC.getSettings),
@@ -47,6 +47,11 @@ const api: TransferJaguarApi = {
     const listener = () => cb();
     ipcRenderer.on(IPC.openSettings, listener);
     return () => ipcRenderer.removeListener(IPC.openSettings, listener);
+  },
+  onConnectionState: (cb: (e: ConnectionStateEvent) => void) => {
+    const listener = (_e: unknown, ev: ConnectionStateEvent) => cb(ev);
+    ipcRenderer.on(IPC.connectionState, listener);
+    return () => ipcRenderer.removeListener(IPC.connectionState, listener);
   },
 
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
