@@ -403,6 +403,8 @@ function pipeStreams(
   let transferred = 0;
   let canceled = false;
   let paused = false;
+  let ended = false; // read side reached EOF and we've called write.end()
+  let errored = false;
   let settled = false;
 
   const done = new Promise<"completed" | "canceled">((resolve, reject) => {
@@ -414,6 +416,7 @@ function pipeStreams(
     const fail = (e: Error) => {
       if (settled) return;
       settled = true;
+      errored = true;
       reject(e);
     };
 
@@ -430,7 +433,10 @@ function pipeStreams(
         });
       }
     });
-    read.on("end", () => write.end());
+    read.on("end", () => {
+      ended = true;
+      write.end();
+    });
     read.on("error", (e: Error) => {
       if (canceled) return finish("canceled");
       try { write.destroy?.(); } catch { /* noop */ }
@@ -441,8 +447,16 @@ function pipeStreams(
       try { read.destroy?.(); } catch { /* noop */ }
       fail(e);
     });
-    write.on("finish", () => finish("completed"));
-    write.on("close", () => { if (canceled) finish("canceled"); });
+    // A normal completion fires 'finish' (fs writables) OR 'close' (ssh2 SFTP
+    // write streams emit 'close', not always 'finish'). Treat either as done,
+    // provided the read side ended and there was no error/cancel.
+    const onDone = () => {
+      if (canceled) return finish("canceled");
+      if (errored) return;
+      if (ended) finish("completed");
+    };
+    write.on("finish", onDone);
+    write.on("close", onDone);
     read.on("close", () => { if (canceled) finish("canceled"); });
   });
 

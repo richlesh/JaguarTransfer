@@ -175,6 +175,22 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
 .file-table th { position: sticky; top: 0; background: var(--panel); font-weight: 600; }
 .file-table th.sortable { cursor: pointer; user-select: none; }
 .file-table th.sortable:hover { color: var(--accent); }
+
+/* Resizable Name column: header holds a drag handle at its right edge. */
+.file-table th.name-th { position: relative; padding-right: 14px; }
+.file-table .col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+.file-table .col-resizer:hover { background: var(--accent); opacity: 0.4; }
+/* With table-layout:fixed, truncate long cell text with an ellipsis. */
+.file-table td { overflow: hidden; text-overflow: ellipsis; }
+.file-table .entry-cell { overflow: hidden; }
+.file-table .entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-table .num { text-align: right; }
 .file-table tr.row-dir td:first-child { font-weight: 600; }
 .file-table tbody tr:hover { background: var(--row-hover); }
