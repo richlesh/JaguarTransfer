@@ -40,6 +40,17 @@ export interface JaguarApi {
 
   // Remote browsing
   remoteList(sessionId: string, path: string): Promise<RemoteListing>;
+  // Remote operations
+  remoteRename(sessionId: string, fromPath: string, toName: string): Promise<void>;
+  remoteMkdir(sessionId: string, parentPath: string, name: string): Promise<void>;
+  remoteDelete(sessionId: string, path: string): Promise<void>;
+
+  // Local browsing + operations
+  localHome(): Promise<string>;
+  localList(path: string): Promise<RemoteListing>;
+  localRename(fromPath: string, toName: string): Promise<void>;
+  localMkdir(parentPath: string, name: string): Promise<void>;
+  localDelete(path: string): Promise<void>;
 
   // Utilities
   openExternal(url: string): Promise<void>;
@@ -56,5 +67,13 @@ export const IPC = {
   disconnect: "conn:disconnect",
   hostkeyTrust: "hostkey:trust",
   remoteList: "remote:list",
+  remoteRename: "remote:rename",
+  remoteMkdir: "remote:mkdir",
+  remoteDelete: "remote:delete",
+  localHome: "local:home",
+  localList: "local:list",
+  localRename: "local:rename",
+  localMkdir: "local:mkdir",
+  localDelete: "local:delete",
   openExternal: "app:open-external",
 } as const;

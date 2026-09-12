@@ -230,3 +230,93 @@ export function list(sessionId: string, path: string): Promise<RemoteListing> {
     });
   });
 }
+
+function sessionOrThrow(sessionId: string): Session {
+  const s = sessions.get(sessionId);
+  if (!s) throw new Error("Not connected (unknown session).");
+  return s;
+}
+
+/** POSIX-join a directory path with a child segment. */
+function joinRemote(dir: string, child: string): string {
+  return dir.replace(/\/+$/, "") + "/" + child;
+}
+
+/** Rename/move a remote entry. `toName` may be a bare name (rename within the
+ *  same directory) or an absolute path (move). */
+export function rename(sessionId: string, fromPath: string, toName: string): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  const to = toName.startsWith("/") ? toName : joinRemote(dirnameRemote(fromPath), toName);
+  return new Promise((resolve, reject) => {
+    s.sftp.rename(fromPath, to, (err) => (err ? reject(new Error(err.message)) : resolve()));
+  });
+}
+
+/** Create a remote directory under `parentPath`. */
+export function mkdir(sessionId: string, parentPath: string, name: string): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  const dir = joinRemote(parentPath, name);
+  return new Promise((resolve, reject) => {
+    s.sftp.mkdir(dir, (err) => (err ? reject(new Error(err.message)) : resolve()));
+  });
+}
+
+/** POSIX dirname for a remote path. */
+function dirnameRemote(p: string): string {
+  const trimmed = p.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  return idx <= 0 ? "/" : trimmed.slice(0, idx);
+}
+
+function statRemote(sftp: SFTPWrapper, path: string): Promise<{ isDir: boolean }> {
+  return new Promise((resolve, reject) => {
+    sftp.lstat(path, (err, stats) => {
+      if (err) reject(new Error(err.message));
+      else resolve({ isDir: stats.isDirectory() });
+    });
+  });
+}
+
+function readdirRemote(sftp: SFTPWrapper, path: string): Promise<Array<{ name: string; isDir: boolean }>> {
+  return new Promise((resolve, reject) => {
+    sftp.readdir(path, (err, list) => {
+      if (err) reject(new Error(err.message));
+      else resolve(list.map((e) => ({ name: e.filename, isDir: e.attrs.isDirectory() })));
+    });
+  });
+}
+
+function unlinkRemote(sftp: SFTPWrapper, path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    sftp.unlink(path, (err) => (err ? reject(new Error(err.message)) : resolve()));
+  });
+}
+
+function rmdirRemote(sftp: SFTPWrapper, path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    sftp.rmdir(path, (err) => (err ? reject(new Error(err.message)) : resolve()));
+  });
+}
+
+/**
+ * Delete a remote file or directory. SFTP rmdir is non-recursive, so for a
+ * directory we depth-first remove its contents before removing the directory.
+ * Symlinks are unlinked (never followed).
+ */
+export async function remove(sessionId: string, path: string): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  if (path === "/" || path === "") throw new Error("Refusing to delete the remote root.");
+  const st = await statRemote(s.sftp, path);
+  if (!st.isDir) {
+    await unlinkRemote(s.sftp, path);
+    return;
+  }
+  const children = await readdirRemote(s.sftp, path);
+  for (const c of children) {
+    const child = joinRemote(path, c.name);
+    if (c.isDir) await remove(sessionId, child);
+    else await unlinkRemote(s.sftp, child);
+  }
+  await rmdirRemote(s.sftp, path);
+}
+

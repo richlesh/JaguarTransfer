@@ -31,23 +31,30 @@ export interface SiteInput extends Omit<Site, "id"> {
   secret?: string;
 }
 
-/** One entry in a remote directory listing. */
-export interface RemoteEntry {
+/** One entry in a directory listing (local or remote share the same shape). */
+export interface FsEntry {
   name: string;
   /** "file" | "directory" | "symlink" | "other". */
   kind: "file" | "directory" | "symlink" | "other";
   sizeBytes: number;
   /** Modification time as epoch milliseconds (0 when unknown). */
   modifiedMs: number;
-  /** POSIX permission bits (e.g. 0o644), or null when unknown. */
+  /** POSIX permission bits (e.g. 0o644), or null when unknown/NA. */
   mode: number | null;
 }
 
 /** A directory listing for a resolved path. */
-export interface RemoteListing {
+export interface FsListing {
   path: string;
-  entries: RemoteEntry[];
+  entries: FsEntry[];
 }
+
+/** Which filesystem a pane/op targets. */
+export type Side = "local" | "remote";
+
+// Back-compat aliases (remote pane originally used these names).
+export type RemoteEntry = FsEntry;
+export type RemoteListing = FsListing;
 
 /** Connection lifecycle state surfaced to the UI. */
 export type ConnectionState = "idle" | "connecting" | "verifying-hostkey" | "connected" | "error";

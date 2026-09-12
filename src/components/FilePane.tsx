@@ -1,0 +1,219 @@
+import { useCallback, useEffect, useState } from "react";
+import type { FsEntry, FsListing } from "../shared/types";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { PromptDialog } from "./PromptDialog";
+
+/** Filesystem operations for one side (local or remote), injected by the app so
+ *  the pane is side-agnostic. Paths are POSIX for remote and native for local. */
+export interface PaneOps {
+  list(path: string): Promise<FsListing>;
+  rename(fromPath: string, toName: string): Promise<void>;
+  mkdir(parentPath: string, name: string): Promise<void>;
+  delete(path: string): Promise<void>;
+  /** Path separator for this side ("/" remote; provided for local). */
+  sep: string;
+}
+
+interface Props {
+  title: string;
+  ops: PaneOps;
+  initialPath: string;
+  onError: (msg: string) => void;
+}
+
+function fmtSize(bytes: number, kind: FsEntry["kind"]): string {
+  if (kind === "directory") return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+function fmtMode(mode: number | null): string {
+  if (mode == null) return "";
+  const rwx = (n: number) => `${n & 4 ? "r" : "-"}${n & 2 ? "w" : "-"}${n & 1 ? "x" : "-"}`;
+  return rwx((mode >> 6) & 7) + rwx((mode >> 3) & 7) + rwx(mode & 7);
+}
+
+function fmtDate(ms: number): string {
+  return ms ? new Date(ms).toLocaleString() : "";
+}
+
+/** Join a path with a child segment using the pane's separator. */
+function joinPath(base: string, child: string, sep: string): string {
+  if (child === "..") {
+    const trimmed = base.replace(new RegExp(`${sep === "\\" ? "\\\\" : sep}+$`), "");
+    const idx = trimmed.lastIndexOf(sep);
+    if (idx < 0) return base;
+    const up = trimmed.slice(0, idx);
+    // Preserve root ("/" for POSIX, "C:\" for Windows drive roots).
+    if (up === "") return sep === "/" ? "/" : trimmed.slice(0, idx + 1);
+    return up;
+  }
+  return base.replace(new RegExp(`${sep === "\\" ? "\\\\" : sep}+$`), "") + sep + child;
+}
+
+/** A directory view (local or remote) with navigate, refresh, new folder,
+ *  rename, and delete (with confirmation). */
+export function FilePane({ title, ops, initialPath, onError }: Props) {
+  const [path, setPath] = useState(initialPath);
+  const [entries, setEntries] = useState<FsEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<FsEntry | null>(null);
+  const [deleting, setDeleting] = useState<FsEntry | null>(null);
+  const [newFolder, setNewFolder] = useState(false);
+
+  const load = useCallback(
+    async (target: string) => {
+      setLoading(true);
+      try {
+        const listing = await ops.list(target);
+        setPath(listing.path);
+        setEntries(listing.entries);
+        setSelected(null);
+      } catch (e) {
+        onError(e instanceof Error ? e.message : "Could not list the directory.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [ops, onError]
+  );
+
+  useEffect(() => {
+    void load(initialPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPath]);
+
+  const doRename = useCallback(
+    async (entry: FsEntry, newName: string) => {
+      setRenaming(null);
+      if (newName === entry.name) return;
+      try {
+        await ops.rename(joinPath(path, entry.name, ops.sep), newName);
+        await load(path);
+      } catch (e) {
+        onError(e instanceof Error ? e.message : "Rename failed.");
+      }
+    },
+    [ops, path, load, onError]
+  );
+
+  const doDelete = useCallback(
+    async (entry: FsEntry) => {
+      setDeleting(null);
+      try {
+        await ops.delete(joinPath(path, entry.name, ops.sep));
+        await load(path);
+      } catch (e) {
+        onError(e instanceof Error ? e.message : "Delete failed.");
+      }
+    },
+    [ops, path, load, onError]
+  );
+
+  const doMkdir = useCallback(
+    async (name: string) => {
+      setNewFolder(false);
+      try {
+        await ops.mkdir(path, name);
+        await load(path);
+      } catch (e) {
+        onError(e instanceof Error ? e.message : "Could not create the folder.");
+      }
+    },
+    [ops, path, load, onError]
+  );
+
+  const selectedEntry = entries.find((e) => e.name === selected) ?? null;
+
+  return (
+    <div className="pane">
+      <div className="pane-toolbar">
+        <span className="pane-title">{title}</span>
+        <button className="secondary" title="Up one level" onClick={() => void load(joinPath(path, "..", ops.sep))}>↑</button>
+        <button className="secondary" title="Refresh" onClick={() => void load(path)}>⟳</button>
+        <button className="secondary" title="New folder" onClick={() => setNewFolder(true)}>New Folder</button>
+        <button className="secondary" title="Rename" disabled={!selectedEntry} onClick={() => selectedEntry && setRenaming(selectedEntry)}>Rename</button>
+        <button className="secondary danger-text" title="Delete" disabled={!selectedEntry} onClick={() => selectedEntry && setDeleting(selectedEntry)}>Delete</button>
+      </div>
+      <div className="pane-path" title={path}>{path}{loading ? "  (loading…)" : ""}</div>
+      <div className="pane-list">
+        <table className="file-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th className="num">Size</th>
+              <th>Modified</th>
+              <th>Perms</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 ? (
+              <tr><td colSpan={4} className="empty">{loading ? "" : "Empty directory."}</td></tr>
+            ) : (
+              entries.map((e) => (
+                <tr
+                  key={e.name}
+                  className={(e.kind === "directory" ? "row-dir" : "") + (selected === e.name ? " selected" : "")}
+                  onClick={() => setSelected(e.name)}
+                  onDoubleClick={() => {
+                    if (e.kind === "directory") void load(joinPath(path, e.name, ops.sep));
+                  }}
+                >
+                  <td>
+                    <span className="entry-icon">{e.kind === "directory" ? "📁" : e.kind === "symlink" ? "🔗" : "📄"}</span>
+                    {e.name}
+                  </td>
+                  <td className="num">{fmtSize(e.sizeBytes, e.kind)}</td>
+                  <td>{fmtDate(e.modifiedMs)}</td>
+                  <td className="perms">{fmtMode(e.mode)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {renaming && (
+        <PromptDialog
+          title={`Rename “${renaming.name}”`}
+          label="New name"
+          initialValue={renaming.name}
+          confirmLabel="Rename"
+          onConfirm={(v) => void doRename(renaming, v)}
+          onCancel={() => setRenaming(null)}
+        />
+      )}
+      {newFolder && (
+        <PromptDialog
+          title="New folder"
+          label="Folder name"
+          confirmLabel="Create"
+          onConfirm={(v) => void doMkdir(v)}
+          onCancel={() => setNewFolder(false)}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete “${deleting.name}”?`}
+          message={
+            deleting.kind === "directory"
+              ? "This permanently deletes the folder and everything inside it. This cannot be undone."
+              : "This permanently deletes the file. This cannot be undone."
+          }
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => void doDelete(deleting)}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+    </div>
+  );
+}

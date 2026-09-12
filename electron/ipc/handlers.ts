@@ -10,7 +10,8 @@ import { loadSettings, saveSettings } from "../settings.js";
 import { listSites, saveSite, deleteSite, getSite } from "../sites.js";
 import { setSecret, deleteSecret } from "../secrets.js";
 import { trustHostKey } from "../knownHosts.js";
-import { connect, disconnect, list } from "../sftp/engine.js";
+import { connect, disconnect, list, rename as remoteRename, mkdir as remoteMkdir, remove as remoteRemove } from "../sftp/engine.js";
+import * as localFs from "../local/fs.js";
 
 export function registerIpcHandlers(): void {
   // Settings
@@ -56,6 +57,21 @@ export function registerIpcHandlers(): void {
 
   // Remote browsing
   ipcMain.handle(IPC.remoteList, (_e, sessionId: string, path: string) => list(sessionId, path));
+  // Remote operations
+  ipcMain.handle(IPC.remoteRename, (_e, sessionId: string, fromPath: string, toName: string) =>
+    remoteRename(sessionId, fromPath, toName)
+  );
+  ipcMain.handle(IPC.remoteMkdir, (_e, sessionId: string, parentPath: string, name: string) =>
+    remoteMkdir(sessionId, parentPath, name)
+  );
+  ipcMain.handle(IPC.remoteDelete, (_e, sessionId: string, path: string) => remoteRemove(sessionId, path));
+
+  // Local browsing + operations
+  ipcMain.handle(IPC.localHome, () => localFs.homePath());
+  ipcMain.handle(IPC.localList, (_e, path: string) => localFs.list(path));
+  ipcMain.handle(IPC.localRename, (_e, fromPath: string, toName: string) => localFs.rename(fromPath, toName));
+  ipcMain.handle(IPC.localMkdir, (_e, parentPath: string, name: string) => localFs.mkdir(parentPath, name));
+  ipcMain.handle(IPC.localDelete, (_e, path: string) => localFs.remove(path));
 
   // Utilities
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {

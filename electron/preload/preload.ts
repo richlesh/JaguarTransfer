@@ -19,6 +19,17 @@ const api: JaguarApi = {
   hostkeyTrust: (prompt: HostKeyPrompt) => ipcRenderer.invoke(IPC.hostkeyTrust, prompt),
 
   remoteList: (sessionId: string, path: string) => ipcRenderer.invoke(IPC.remoteList, sessionId, path),
+  remoteRename: (sessionId: string, fromPath: string, toName: string) =>
+    ipcRenderer.invoke(IPC.remoteRename, sessionId, fromPath, toName),
+  remoteMkdir: (sessionId: string, parentPath: string, name: string) =>
+    ipcRenderer.invoke(IPC.remoteMkdir, sessionId, parentPath, name),
+  remoteDelete: (sessionId: string, path: string) => ipcRenderer.invoke(IPC.remoteDelete, sessionId, path),
+
+  localHome: () => ipcRenderer.invoke(IPC.localHome),
+  localList: (path: string) => ipcRenderer.invoke(IPC.localList, path),
+  localRename: (fromPath: string, toName: string) => ipcRenderer.invoke(IPC.localRename, fromPath, toName),
+  localMkdir: (parentPath: string, name: string) => ipcRenderer.invoke(IPC.localMkdir, parentPath, name),
+  localDelete: (path: string) => ipcRenderer.invoke(IPC.localDelete, path),
 
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
 };
