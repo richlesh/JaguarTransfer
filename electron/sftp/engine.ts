@@ -2,7 +2,7 @@
 // connection per session, verify the host key against our TOFU store, and read
 // remote directories. Transfers (chunked/pipelined) come in M3.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, createReadStream, createWriteStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -331,8 +331,7 @@ export async function remove(sessionId: string, path: string): Promise<void> {
 
 import { promises as fsp } from "node:fs";
 
-/** Number of concurrent in-flight chunks per file (pipelining depth). */
-const CHUNK_CONCURRENCY = 64;
+/** Read/stream buffer size per chunk. */
 const CHUNK_SIZE = 32 * 1024;
 
 export function getSession(sessionId: string): Session | undefined {
@@ -381,49 +380,98 @@ export async function ensureRemoteDir(sessionId: string, dir: string): Promise<v
   }
 }
 
-/** Download one remote file to a local path, reporting cumulative bytes. */
+/** A running transfer that can be paused/resumed/canceled mid-file. */
+export interface TransferControl {
+  /** Resolves when the file finishes; rejects on error; resolves early if canceled. */
+  done: Promise<"completed" | "canceled">;
+  pause(): void;
+  resume(): void;
+  cancel(): void;
+}
+
+/** Drive a read→write stream pipe with progress, pause/resume, and cancel. */
+function pipeStreams(
+  read: NodeJS.ReadableStream & { destroy?: (e?: Error) => void },
+  write: NodeJS.WritableStream & { destroy?: (e?: Error) => void },
+  onBytes: (transferred: number) => void
+): TransferControl {
+  let transferred = 0;
+  let canceled = false;
+  let settled = false;
+
+  const done = new Promise<"completed" | "canceled">((resolve, reject) => {
+    const finish = (r: "completed" | "canceled") => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
+    const fail = (e: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(e);
+    };
+
+    read.on("data", (chunk: Buffer) => {
+      transferred += chunk.length;
+      onBytes(transferred);
+    });
+    read.on("error", (e: Error) => {
+      if (canceled) return finish("canceled");
+      try { write.destroy?.(); } catch { /* noop */ }
+      fail(e);
+    });
+    write.on("error", (e: Error) => {
+      if (canceled) return finish("canceled");
+      try { read.destroy?.(); } catch { /* noop */ }
+      fail(e);
+    });
+    write.on("finish", () => finish("completed"));
+    // If canceled, destroy() may emit 'close' without 'error'; resolve then too.
+    write.on("close", () => { if (canceled) finish("canceled"); });
+    read.on("close", () => { if (canceled) finish("canceled"); });
+
+    read.pipe(write);
+  });
+
+  return {
+    done,
+    pause: () => read.pause?.(),
+    resume: () => read.resume?.(),
+    cancel: () => {
+      canceled = true;
+      try { read.destroy?.(); } catch { /* noop */ }
+      try { write.destroy?.(); } catch { /* noop */ }
+    },
+  };
+}
+
+/** Download one remote file to a local path (abortable/pausable). */
 export function downloadFile(
   sessionId: string,
   remotePath: string,
   localPath: string,
   onBytes: (transferred: number) => void
-): Promise<void> {
+): TransferControl {
   const s = sessionOrThrow(sessionId);
-  return new Promise((resolve, reject) => {
-    s.sftp.fastGet(
-      remotePath,
-      localPath,
-      {
-        concurrency: CHUNK_CONCURRENCY,
-        chunkSize: CHUNK_SIZE,
-        step: (transferred: number) => onBytes(transferred),
-      },
-      (err) => (err ? reject(new Error(err.message)) : resolve())
-    );
-  });
+  const read = s.sftp.createReadStream(remotePath, { highWaterMark: CHUNK_SIZE });
+  const write = createWriteStream(localPath);
+  return pipeStreams(read, write, onBytes);
 }
 
-/** Upload one local file to a remote path, reporting cumulative bytes. */
+/** Upload one local file to a remote path (abortable/pausable). */
 export function uploadFile(
   sessionId: string,
   localPath: string,
   remotePath: string,
   onBytes: (transferred: number) => void
-): Promise<void> {
+): TransferControl {
   const s = sessionOrThrow(sessionId);
-  return new Promise((resolve, reject) => {
-    s.sftp.fastPut(
-      localPath,
-      remotePath,
-      {
-        concurrency: CHUNK_CONCURRENCY,
-        chunkSize: CHUNK_SIZE,
-        step: (transferred: number) => onBytes(transferred),
-      },
-      (err) => (err ? reject(new Error(err.message)) : resolve())
-    );
-  });
+  const read = createReadStream(localPath, { highWaterMark: CHUNK_SIZE });
+  const write = s.sftp.createWriteStream(remotePath);
+  return pipeStreams(read, write, onBytes);
 }
+
+// (legacy fastGet/fastPut bodies replaced by the stream-based versions above)
 
 /** Size a local path (for planning). */
 export async function localSize(path: string): Promise<number> {

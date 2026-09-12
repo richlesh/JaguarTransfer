@@ -14,6 +14,7 @@ import {
   ensureRemoteDir,
   readdirDetailed,
   localSize,
+  type TransferControl,
 } from "../sftp/engine.js";
 
 /** A flat file unit within a task (after directory expansion). */
@@ -43,6 +44,10 @@ interface Task {
   // cooperative control
   cancelRequested: boolean;
   pauseRequested: boolean;
+  /** In-flight per-file transfer controls (for mid-file pause/cancel). */
+  activeControls: Set<TransferControl>;
+  /** True while a runTask loop is active (prevents double-runs on resume). */
+  runActive: boolean;
 }
 
 type Emit = (task: TransferTask) => void;
@@ -166,7 +171,7 @@ async function planTask(t: Task, req: TransferRequest): Promise<void> {
 }
 
 /** Transfer a single file unit, wiring cumulative-byte progress. */
-async function runFile(t: Task, f: FileUnit): Promise<void> {
+async function runFile(t: Task, f: FileUnit): Promise<"completed" | "canceled"> {
   const onBytes = (transferred: number) => {
     f.done = transferred;
     sampleThroughput(t);
@@ -174,14 +179,30 @@ async function runFile(t: Task, f: FileUnit): Promise<void> {
   };
   if (t.direction === "download") {
     await fsp.mkdir(dirname(f.dest), { recursive: true });
-    await downloadFile(t.sessionId, f.source, f.dest, onBytes);
   } else {
     await ensureRemoteDir(t.sessionId, dirname(f.dest).split(/[\\/]/).join("/"));
-    await uploadFile(t.sessionId, f.source, f.dest, onBytes);
   }
-  f.done = f.sizeBytes;
-  f.completed = true;
-  publish(t);
+  const control =
+    t.direction === "download"
+      ? downloadFile(t.sessionId, f.source, f.dest, onBytes)
+      : uploadFile(t.sessionId, f.source, f.dest, onBytes);
+
+  // Register so pause()/cancel() reach the in-flight stream immediately.
+  t.activeControls.add(control);
+  if (t.pauseRequested) control.pause();
+  if (t.cancelRequested) control.cancel();
+
+  try {
+    const result = await control.done;
+    if (result === "completed") {
+      f.done = f.sizeBytes;
+      f.completed = true;
+      publish(t);
+    }
+    return result;
+  } finally {
+    t.activeControls.delete(control);
+  }
 }
 
 /** Run a task's files with bounded concurrency, honoring cancel/pause. */
@@ -201,11 +222,13 @@ async function runTask(t: Task): Promise<void> {
         continue;
       }
       const f = pending[index++];
-      await runFile(t, f);
+      const result = await runFile(t, f);
+      if (result === "canceled") return;
     }
   };
 
   const workerCount = Math.max(1, Math.min(maxConcurrentFiles, pending.length || 1));
+  t.runActive = true;
   try {
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
     if (t.cancelRequested) {
@@ -218,6 +241,8 @@ async function runTask(t: Task): Promise<void> {
   } catch (e) {
     t.status = "error";
     t.error = e instanceof Error ? e.message : String(e);
+  } finally {
+    t.runActive = false;
   }
   publish(t);
 }
@@ -244,6 +269,8 @@ export async function enqueue(req: TransferRequest): Promise<string> {
     lastSampleBytes: 0,
     cancelRequested: false,
     pauseRequested: false,
+    activeControls: new Set(),
+    runActive: false,
   };
   tasks.set(id, t);
   publish(t);
@@ -268,6 +295,8 @@ export function cancel(id: string): void {
   const t = tasks.get(id);
   if (!t) return;
   t.cancelRequested = true;
+  // Abort any in-flight file streams immediately (mid-file cancel).
+  for (const c of t.activeControls) c.cancel();
   if (t.status === "queued") {
     t.status = "canceled";
     publish(t);
@@ -278,6 +307,10 @@ export function pause(id: string): void {
   const t = tasks.get(id);
   if (!t || t.status !== "running") return;
   t.pauseRequested = true;
+  // Pause the in-flight streams so bytes stop flowing right away.
+  for (const c of t.activeControls) c.pause();
+  t.status = "paused";
+  publish(t);
 }
 
 export function resume(id: string): void {
@@ -285,12 +318,33 @@ export function resume(id: string): void {
   if (!t) return;
   if (t.status === "paused") {
     t.pauseRequested = false;
-    void runTask(t);
+    t.status = "running";
+    // Resume any in-flight streams (mid-file pause).
+    for (const c of t.activeControls) c.resume();
+    // If the run loop is still alive (it parks on pauseRequested), it will pick
+    // up on its own. Only restart when no loop is active.
+    if (!t.runActive) void runTask(t);
+    else publish(t);
   }
 }
 
 export function listTasks(): TransferTask[] {
   return [...tasks.values()].map(toPublic);
+}
+
+/** True when any transfer is queued/running/paused (used to guard app quit). */
+export function hasActiveTransfers(): boolean {
+  for (const t of tasks.values()) {
+    if (t.status === "queued" || t.status === "running" || t.status === "paused") return true;
+  }
+  return false;
+}
+
+/** Cancel every active transfer (used when the user confirms quit). */
+export function cancelAll(): void {
+  for (const t of tasks.values()) {
+    if (t.status === "queued" || t.status === "running" || t.status === "paused") cancel(t.id);
+  }
 }
 
 /** Drop finished tasks from memory (Clear completed). */

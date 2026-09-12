@@ -1,15 +1,19 @@
 // Electron main process entry point for JaguarTransfer.
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { registerIpcHandlers } from "../ipc/handlers.js";
 import { buildMenu, showSplash, registerDialogIpc } from "../dialogs.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import { disconnectAll } from "../sftp/engine.js";
-import { configureManager } from "../transfer/manager.js";
+import { configureManager, hasActiveTransfers, cancelAll } from "../transfer/manager.js";
 import { IPC } from "../../src/shared/ipc.js";
 
 const isDev = process.env.NODE_ENV === "development";
+
+/** Set true once the user has confirmed quitting with active transfers, so the
+ *  second (programmatic) close isn't intercepted again. */
+let allowClose = false;
 
 function createWindow(): void {
   // macOS uses the packaged .icns and ignores BrowserWindow.icon, so only set it
@@ -44,6 +48,27 @@ function createWindow(): void {
   } else {
     win.loadFile(join(__dirname, "..", "..", "..", "dist", "index.html"));
   }
+
+  // Guard the window close/quit: if transfers are active, confirm before closing.
+  win.on("close", (e) => {
+    if (allowClose || !hasActiveTransfers()) return;
+    e.preventDefault();
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "warning",
+      buttons: ["Keep Transferring", "Cancel & Quit"],
+      defaultId: 0,
+      cancelId: 0,
+      title: "Transfers in progress",
+      message: "Transfers are still in progress.",
+      detail: "Quitting now will cancel the active transfers and leave any partially transferred files in place. Quit anyway?",
+      noLink: true,
+    });
+    if (choice === 1) {
+      cancelAll();
+      allowClose = true;
+      win.close();
+    }
+  });
 
   win.once("ready-to-show", () => win.show());
   buildMenu(win);

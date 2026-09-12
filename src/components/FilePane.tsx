@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FsEntry, FsListing } from "../shared/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PromptDialog } from "./PromptDialog";
@@ -90,6 +90,34 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
   const [deleting, setDeleting] = useState<FsEntry | null>(null);
   const [newFolder, setNewFolder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [sortKey, setSortKey] = useState<"name" | "size" | "modified">("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Click a header: toggle direction if it's the current column, else switch to
+  // it (ascending). Directories always group first regardless of sort.
+  const clickHeader = (key: "name" | "size" | "modified") => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const sortedEntries = useMemo(() => {
+    const dirWeight = (e: FsEntry) => (e.kind === "directory" ? 0 : 1);
+    const cmp = (a: FsEntry, b: FsEntry) => {
+      // Directories first, always.
+      const dw = dirWeight(a) - dirWeight(b);
+      if (dw !== 0) return dw;
+      let r = 0;
+      if (sortKey === "name") r = a.name.localeCompare(b.name);
+      else if (sortKey === "size") r = a.sizeBytes - b.sizeBytes;
+      else r = a.modifiedMs - b.modifiedMs;
+      if (r === 0) r = a.name.localeCompare(b.name); // stable tiebreak
+      return sortDir === "asc" ? r : -r;
+    };
+    return [...entries].sort(cmp);
+  }, [entries, sortKey, sortDir]);
+
+  const sortMark = (key: "name" | "size" | "modified") =>
+    key === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
 
   const load = useCallback(
     async (target: string) => {
@@ -229,17 +257,17 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
         <table className="file-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th className="num">Size</th>
-              <th>Modified</th>
+              <th className="sortable" onClick={() => clickHeader("name")}>Name{sortMark("name")}</th>
+              <th className="num sortable" onClick={() => clickHeader("size")}>Size{sortMark("size")}</th>
+              <th className="sortable" onClick={() => clickHeader("modified")}>Modified{sortMark("modified")}</th>
               <th>Perms</th>
             </tr>
           </thead>
           <tbody>
-            {entries.length === 0 ? (
+            {sortedEntries.length === 0 ? (
               <tr><td colSpan={4} className="empty">{loading ? "" : "Empty directory."}</td></tr>
             ) : (
-              entries.map((e) => (
+              sortedEntries.map((e) => (
                 <tr
                   key={e.name}
                   className={(e.kind === "directory" ? "row-dir" : "") + (selected === e.name ? " selected" : "")}

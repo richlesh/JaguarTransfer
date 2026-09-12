@@ -26,6 +26,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [siteToDelete, setSiteToDelete] = useState<Site | null>(null);
+  const [cancelConfirm, setCancelConfirm] = useState<import("./shared/types").TransferTask | null>(null);
   const [tasks, setTasks] = useState<Map<string, import("./shared/types").TransferTask>>(new Map());
   const [paths, setPaths] = useState<{ local: string; remote: string }>({ local: "", remote: "" });
 
@@ -300,7 +301,15 @@ export function App() {
 
         <TransferQueue
           tasks={[...tasks.values()].sort((a, b) => a.name.localeCompare(b.name))}
-          onCancel={(id) => void window.jaguar.transferCancel(id)}
+          onCancel={(id) => {
+            const t = tasks.get(id);
+            // Confirm before canceling an active transfer; harmless states cancel directly.
+            if (t && (t.status === "running" || t.status === "paused" || t.status === "queued")) {
+              setCancelConfirm(t);
+            } else {
+              void window.jaguar.transferCancel(id);
+            }
+          }}
           onPause={(id) => void window.jaguar.transferPause(id)}
           onResume={(id) => void window.jaguar.transferResume(id)}
           onClearFinished={() => {
@@ -352,6 +361,19 @@ export function App() {
             void removeSite(s);
           }}
           onCancel={() => setSiteToDelete(null)}
+        />
+      )}
+      {cancelConfirm && (
+        <ConfirmDialog
+          title="Cancel this transfer?"
+          message={`“${cancelConfirm.name}” is still transferring. Canceling stops it now and leaves any partially transferred file in place. Cancel it?`}
+          confirmLabel="Cancel transfer"
+          danger
+          onConfirm={() => {
+            void window.jaguar.transferCancel(cancelConfirm.id);
+            setCancelConfirm(null);
+          }}
+          onCancel={() => setCancelConfirm(null)}
         />
       )}
       {toast && <div className="toast">{toast}</div>}
