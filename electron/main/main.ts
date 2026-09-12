@@ -6,6 +6,8 @@ import { registerIpcHandlers } from "../ipc/handlers.js";
 import { buildMenu, showSplash, registerDialogIpc } from "../dialogs.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import { disconnectAll } from "../sftp/engine.js";
+import { configureManager } from "../transfer/manager.js";
+import { IPC } from "../../src/shared/ipc.js";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -45,6 +47,14 @@ function createWindow(): void {
 
   win.once("ready-to-show", () => win.show());
   buildMenu(win);
+
+  // Route transfer progress events to this window's renderer.
+  configureManager({
+    emit: (task) => {
+      if (!win.isDestroyed()) win.webContents.send(IPC.transferProgress, task);
+    },
+    maxConcurrentFiles: loadSettings().maxConcurrentTransfers,
+  });
 
   // Persist window bounds (debounced) so they restore next launch.
   let boundsTimer: NodeJS.Timeout | null = null;

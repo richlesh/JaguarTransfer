@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FsEntry, FsListing } from "../shared/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PromptDialog } from "./PromptDialog";
+import { UpArrowIcon, ReloadIcon, NewFolderIcon, RenameIcon, TrashIcon, FolderEntryIcon, FileEntryIcon, SymlinkEntryIcon } from "./Icons";
 
 /** Filesystem operations for one side (local or remote), injected by the app so
  *  the pane is side-agnostic. Paths are POSIX for remote and native for local. */
@@ -19,6 +20,19 @@ interface Props {
   ops: PaneOps;
   initialPath: string;
   onError: (msg: string) => void;
+  /** Which side this pane represents. */
+  side: "local" | "remote";
+  /** The other side is available as a transfer target (a session is connected). */
+  transferEnabled: boolean;
+  /** Label for the transfer button (e.g. "Upload →" on local, "↓ Download" on remote). */
+  transferLabel: string;
+  /** Enqueue a transfer of these entries from THIS pane's path to the other side. */
+  onTransfer: (fromSide: "local" | "remote", fromDir: string, entries: FsEntry[]) => void;
+  /** Notify the app of this pane's current directory (so the app knows the
+   *  opposite pane's destination when a drop/transfer happens). */
+  onPathChange?: (side: "local" | "remote", path: string) => void;
+  /** Bump to force a re-list of the current directory (e.g. after a transfer). */
+  reloadKey?: number;
 }
 
 function fmtSize(bytes: number, kind: FsEntry["kind"]): string {
@@ -44,6 +58,13 @@ function fmtDate(ms: number): string {
   return ms ? new Date(ms).toLocaleString() : "";
 }
 
+/** The line-drawing icon for a directory entry, colored by kind. */
+function EntryIcon({ kind }: { kind: FsEntry["kind"] }) {
+  if (kind === "directory") return <span className="entry-icon dir"><FolderEntryIcon /></span>;
+  if (kind === "symlink") return <span className="entry-icon link"><SymlinkEntryIcon /></span>;
+  return <span className="entry-icon"><FileEntryIcon /></span>;
+}
+
 /** Join a path with a child segment using the pane's separator. */
 function joinPath(base: string, child: string, sep: string): string {
   if (child === "..") {
@@ -60,7 +81,7 @@ function joinPath(base: string, child: string, sep: string): string {
 
 /** A directory view (local or remote) with navigate, refresh, new folder,
  *  rename, and delete (with confirmation). */
-export function FilePane({ title, ops, initialPath, onError }: Props) {
+export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey }: Props) {
   const [path, setPath] = useState(initialPath);
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,6 +89,7 @@ export function FilePane({ title, ops, initialPath, onError }: Props) {
   const [renaming, setRenaming] = useState<FsEntry | null>(null);
   const [deleting, setDeleting] = useState<FsEntry | null>(null);
   const [newFolder, setNewFolder] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const load = useCallback(
     async (target: string) => {
@@ -77,19 +99,34 @@ export function FilePane({ title, ops, initialPath, onError }: Props) {
         setPath(listing.path);
         setEntries(listing.entries);
         setSelected(null);
+        onPathChange?.(side, listing.path);
       } catch (e) {
         onError(e instanceof Error ? e.message : "Could not list the directory.");
       } finally {
         setLoading(false);
       }
     },
-    [ops, onError]
+    [ops, onError, onPathChange, side]
   );
 
   useEffect(() => {
     void load(initialPath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPath]);
+
+  // Re-list the CURRENT directory when the app bumps reloadKey (e.g. after a
+  // transfer completes into this pane). Skips the initial render.
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const firstReload = useRef(true);
+  useEffect(() => {
+    if (firstReload.current) {
+      firstReload.current = false;
+      return;
+    }
+    void load(pathRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   const doRename = useCallback(
     async (entry: FsEntry, newName: string) => {
@@ -134,14 +171,58 @@ export function FilePane({ title, ops, initialPath, onError }: Props) {
   const selectedEntry = entries.find((e) => e.name === selected) ?? null;
 
   return (
-    <div className="pane">
+    <div
+      className={"pane" + (dragOver ? " drag-over" : "")}
+      onDragOver={(e) => {
+        // Accept drops that originate from the OTHER pane.
+        if (!transferEnabled) return;
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        setDragOver(false);
+        if (!transferEnabled) return;
+        e.preventDefault();
+        try {
+          const raw = e.dataTransfer.getData("application/x-jaguar-entries");
+          if (!raw) return;
+          const payload = JSON.parse(raw) as { side: "local" | "remote"; dir: string; entries: FsEntry[] };
+          // Only accept items dragged FROM the opposite side.
+          if (payload.side === side) return;
+          onTransfer(payload.side, payload.dir, payload.entries);
+        } catch {
+          /* ignore malformed drops */
+        }
+      }}
+    >
       <div className="pane-toolbar">
         <span className="pane-title">{title}</span>
-        <button className="secondary" title="Up one level" onClick={() => void load(joinPath(path, "..", ops.sep))}>↑</button>
-        <button className="secondary" title="Refresh" onClick={() => void load(path)}>⟳</button>
-        <button className="secondary" title="New folder" onClick={() => setNewFolder(true)}>New Folder</button>
-        <button className="secondary" title="Rename" disabled={!selectedEntry} onClick={() => selectedEntry && setRenaming(selectedEntry)}>Rename</button>
-        <button className="secondary danger-text" title="Delete" disabled={!selectedEntry} onClick={() => selectedEntry && setDeleting(selectedEntry)}>Delete</button>
+        <button className="icon-btn" title="Parent folder" aria-label="Parent folder" onClick={() => void load(joinPath(path, "..", ops.sep))}>
+          <UpArrowIcon />
+        </button>
+        <button className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => void load(path)}>
+          <ReloadIcon />
+        </button>
+        <button className="icon-btn" title="New folder" aria-label="New folder" onClick={() => setNewFolder(true)}>
+          <NewFolderIcon />
+        </button>
+        <button className="icon-btn" title="Rename" aria-label="Rename" disabled={!selectedEntry} onClick={() => selectedEntry && setRenaming(selectedEntry)}>
+          <RenameIcon />
+        </button>
+        <button className="icon-btn danger-text" title="Delete" aria-label="Delete" disabled={!selectedEntry} onClick={() => selectedEntry && setDeleting(selectedEntry)}>
+          <TrashIcon />
+        </button>
+        {transferEnabled && (
+          <button
+            className="secondary transfer-btn"
+            title={`Transfer the selected item to the other pane`}
+            disabled={!selectedEntry}
+            onClick={() => selectedEntry && onTransfer(side, path, [selectedEntry])}
+          >
+            {transferLabel}
+          </button>
+        )}
       </div>
       <div className="pane-path" title={path}>{path}{loading ? "  (loading…)" : ""}</div>
       <div className="pane-list">
@@ -162,14 +243,25 @@ export function FilePane({ title, ops, initialPath, onError }: Props) {
                 <tr
                   key={e.name}
                   className={(e.kind === "directory" ? "row-dir" : "") + (selected === e.name ? " selected" : "")}
+                  draggable={transferEnabled}
+                  onDragStart={(ev) => {
+                    setSelected(e.name);
+                    ev.dataTransfer.setData(
+                      "application/x-jaguar-entries",
+                      JSON.stringify({ side, dir: path, entries: [e] })
+                    );
+                    ev.dataTransfer.effectAllowed = "copy";
+                  }}
                   onClick={() => setSelected(e.name)}
                   onDoubleClick={() => {
                     if (e.kind === "directory") void load(joinPath(path, e.name, ops.sep));
                   }}
                 >
                   <td>
-                    <span className="entry-icon">{e.kind === "directory" ? "📁" : e.kind === "symlink" ? "🔗" : "📄"}</span>
-                    {e.name}
+                    <span className="entry-cell">
+                      <EntryIcon kind={e.kind} />
+                      {e.name}
+                    </span>
                   </td>
                   <td className="num">{fmtSize(e.sizeBytes, e.kind)}</td>
                   <td>{fmtDate(e.modifiedMs)}</td>

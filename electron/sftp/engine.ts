@@ -320,3 +320,113 @@ export async function remove(sessionId: string, path: string): Promise<void> {
   await rmdirRemote(s.sftp, path);
 }
 
+
+// ---- Transfer primitives (M3) ----
+//
+// ssh2's fastGet/fastPut perform CONCURRENT, CHUNKED transfers over the single
+// SSH connection — i.e. request pipelining (multiple in-flight read/write
+// packets), which is exactly what tolerates high-latency links. We expose a
+// per-file wrapper with a byte-progress callback plus directory walking and
+// remote mkdir -p, so the transfer manager can plan whole trees.
+
+import { promises as fsp } from "node:fs";
+
+/** Number of concurrent in-flight chunks per file (pipelining depth). */
+const CHUNK_CONCURRENCY = 64;
+const CHUNK_SIZE = 32 * 1024;
+
+export function getSession(sessionId: string): Session | undefined {
+  return sessions.get(sessionId);
+}
+
+/** One entry from a remote directory (name + kind + size), for walking trees. */
+export interface RemoteChild {
+  name: string;
+  isDirectory: boolean;
+  isSymlink: boolean;
+  sizeBytes: number;
+}
+
+export function readdirDetailed(sessionId: string, path: string): Promise<RemoteChild[]> {
+  const s = sessionOrThrow(sessionId);
+  return new Promise((resolve, reject) => {
+    s.sftp.readdir(path, (err, list) => {
+      if (err) return reject(new Error(err.message));
+      resolve(
+        list.map((e) => ({
+          name: e.filename,
+          isDirectory: e.attrs.isDirectory(),
+          isSymlink: e.attrs.isSymbolicLink(),
+          sizeBytes: typeof e.attrs.size === "number" ? e.attrs.size : 0,
+        }))
+      );
+    });
+  });
+}
+
+/** Ensure a remote directory exists (mkdir -p). Ignores "already exists". */
+export async function ensureRemoteDir(sessionId: string, dir: string): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  const parts = dir.split("/").filter(Boolean);
+  let cur = dir.startsWith("/") ? "" : ".";
+  for (const part of parts) {
+    cur = cur === "" ? "/" + part : cur + "/" + part;
+    await new Promise<void>((resolve) => {
+      s.sftp.mkdir(cur, (err) => {
+        // EEXIST / failure-because-present is fine; other errors surface on write.
+        void err;
+        resolve();
+      });
+    });
+  }
+}
+
+/** Download one remote file to a local path, reporting cumulative bytes. */
+export function downloadFile(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  onBytes: (transferred: number) => void
+): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  return new Promise((resolve, reject) => {
+    s.sftp.fastGet(
+      remotePath,
+      localPath,
+      {
+        concurrency: CHUNK_CONCURRENCY,
+        chunkSize: CHUNK_SIZE,
+        step: (transferred: number) => onBytes(transferred),
+      },
+      (err) => (err ? reject(new Error(err.message)) : resolve())
+    );
+  });
+}
+
+/** Upload one local file to a remote path, reporting cumulative bytes. */
+export function uploadFile(
+  sessionId: string,
+  localPath: string,
+  remotePath: string,
+  onBytes: (transferred: number) => void
+): Promise<void> {
+  const s = sessionOrThrow(sessionId);
+  return new Promise((resolve, reject) => {
+    s.sftp.fastPut(
+      localPath,
+      remotePath,
+      {
+        concurrency: CHUNK_CONCURRENCY,
+        chunkSize: CHUNK_SIZE,
+        step: (transferred: number) => onBytes(transferred),
+      },
+      (err) => (err ? reject(new Error(err.message)) : resolve())
+    );
+  });
+}
+
+/** Size a local path (for planning). */
+export async function localSize(path: string): Promise<number> {
+  const st = await fsp.lstat(path);
+  return Number(st.size) || 0;
+}

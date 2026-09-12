@@ -5,13 +5,14 @@
 import { ipcMain, shell } from "electron";
 import { IPC } from "../../src/shared/ipc.js";
 import type { AppSettings } from "../../src/shared/ipc.js";
-import type { SiteInput, HostKeyPrompt } from "../../src/shared/types.js";
+import type { SiteInput, HostKeyPrompt, TransferRequest } from "../../src/shared/types.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import { listSites, saveSite, deleteSite, getSite } from "../sites.js";
 import { setSecret, deleteSecret } from "../secrets.js";
 import { trustHostKey } from "../knownHosts.js";
 import { connect, disconnect, list, rename as remoteRename, mkdir as remoteMkdir, remove as remoteRemove } from "../sftp/engine.js";
 import * as localFs from "../local/fs.js";
+import * as transferManager from "../transfer/manager.js";
 
 export function registerIpcHandlers(): void {
   // Settings
@@ -72,6 +73,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.localRename, (_e, fromPath: string, toName: string) => localFs.rename(fromPath, toName));
   ipcMain.handle(IPC.localMkdir, (_e, parentPath: string, name: string) => localFs.mkdir(parentPath, name));
   ipcMain.handle(IPC.localDelete, (_e, path: string) => localFs.remove(path));
+
+  // Transfers
+  ipcMain.handle(IPC.transferEnqueue, (_e, req: TransferRequest) => transferManager.enqueue(req));
+  ipcMain.handle(IPC.transferCancel, (_e, id: string) => transferManager.cancel(id));
+  ipcMain.handle(IPC.transferPause, (_e, id: string) => transferManager.pause(id));
+  ipcMain.handle(IPC.transferResume, (_e, id: string) => transferManager.resume(id));
+  ipcMain.handle(IPC.transferList, () => transferManager.listTasks());
+  ipcMain.handle(IPC.transferClearFinished, () => transferManager.clearFinished());
 
   // Utilities
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {

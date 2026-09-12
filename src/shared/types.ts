@@ -86,3 +86,58 @@ export interface KnownHost {
   fingerprintSha256: string;
   trustedAtMs: number;
 }
+
+/** Transfer direction. */
+export type TransferDirection = "upload" | "download";
+
+/** How to handle a destination that already exists (M3: overwrite only, but the
+ *  type is here so M4 can add skip/rename without a contract change). */
+export type ConflictPolicy = "overwrite" | "skip" | "rename";
+
+/** Lifecycle of a transfer task. */
+export type TransferStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "completed"
+  | "canceled"
+  | "error";
+
+/** One top-level item the user asked to transfer (a file or a directory). The
+ *  manager expands directories into their files internally. */
+export interface TransferRequest {
+  sessionId: string;
+  direction: TransferDirection;
+  /** Absolute source path (local path for upload; remote path for download). */
+  sourcePath: string;
+  /** Destination DIRECTORY (where the item is placed), on the opposite side. */
+  destDir: string;
+  /** The item's own name (used to build the destination path). */
+  name: string;
+  /** Whether the item is a directory (recursive) or a file. */
+  isDirectory: boolean;
+  conflictPolicy?: ConflictPolicy;
+}
+
+/** A queued/active transfer task, as surfaced to the renderer. */
+export interface TransferTask {
+  id: string;
+  direction: TransferDirection;
+  /** Display name (top-level item name). */
+  name: string;
+  sourcePath: string;
+  destPath: string;
+  status: TransferStatus;
+  /** Total bytes across all files in this task (0 until sized). */
+  totalBytes: number;
+  transferredBytes: number;
+  /** Number of files in this task and how many are done. */
+  fileCount: number;
+  filesDone: number;
+  /** Instantaneous throughput in bytes/sec (0 when not running). */
+  bytesPerSec: number;
+  /** Estimated seconds remaining, or null when unknown. */
+  etaSeconds: number | null;
+  /** Populated when status === "error". */
+  error?: string;
+}

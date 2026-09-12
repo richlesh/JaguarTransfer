@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Site, HostKeyPrompt } from "./shared/types";
+import type { AppSettings } from "./shared/ipc";
 import { SiteEditorDialog } from "./components/SiteEditorDialog";
 import { HostKeyDialog } from "./components/HostKeyDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { FilePane, type PaneOps } from "./components/FilePane";
+import { TransferQueue } from "./components/TransferQueue";
+import { SettingsIcon, PlusIcon, ConnectIcon, TrashIcon, RenameIcon } from "./components/Icons";
 
 interface ActiveSession {
   sessionId: string;
@@ -18,15 +23,49 @@ export function App() {
   const [hostKey, setHostKey] = useState<{ site: Site; prompt: HostKeyPrompt } | null>(null);
   const [localHome, setLocalHome] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<Site | null>(null);
+  const [tasks, setTasks] = useState<Map<string, import("./shared/types").TransferTask>>(new Map());
+  const [paths, setPaths] = useState<{ local: string; remote: string }>({ local: "", remote: "" });
 
   const refreshSites = useCallback(async () => {
     setSites(await window.jaguar.listSites());
   }, []);
 
+  // Subscribe to transfer progress; refresh the current task list on mount.
+  useEffect(() => {
+    void window.jaguar.transferList().then((list) => {
+      setTasks(new Map(list.map((t) => [t.id, t])));
+    });
+    const unsub = window.jaguar.onTransferProgress((task) => {
+      setTasks((prev) => {
+        const next = new Map(prev);
+        next.set(task.id, task);
+        return next;
+      });
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     void refreshSites();
     void window.jaguar.localHome().then(setLocalHome);
+    void window.jaguar.getSettings().then(setSettings);
   }, [refreshSites]);
+
+  // Apply the theme to the document root whenever it changes.
+  useEffect(() => {
+    const dark = settings?.theme === "dark";
+    document.body.classList.toggle("dark", dark);
+  }, [settings?.theme]);
+
+  const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
+    // Optimistic local update so the theme flips immediately, then persist.
+    setSettings((prev) => ({ ...(prev ?? { theme: "light" }), ...patch }));
+    const saved = await window.jaguar.saveSettings(patch);
+    setSettings(saved);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -100,12 +139,68 @@ export function App() {
     };
   }, [session]);
 
+  const onPanePath = useCallback((s: "local" | "remote", p: string) => {
+    setPaths((prev) => ({ ...prev, [s]: p }));
+  }, []);
+
+  /** Enqueue a transfer of `entries` from `fromSide`/`fromDir` to the opposite
+   *  pane's current directory. */
+  const enqueueTransfer = useCallback(
+    async (fromSide: "local" | "remote", fromDir: string, entries: import("./shared/types").FsEntry[]) => {
+      if (!session) {
+        setToast("Connect to a site before transferring.");
+        return;
+      }
+      const direction = fromSide === "local" ? "upload" : "download";
+      const destDir = fromSide === "local" ? paths.remote : paths.local;
+      if (!destDir) {
+        setToast("Destination directory not ready yet.");
+        return;
+      }
+      const fromSep = fromSide === "local" ? localSep : "/";
+      for (const entry of entries) {
+        const sourcePath = fromDir.replace(new RegExp(`${fromSep === "\\" ? "\\\\" : fromSep}+$`), "") + fromSep + entry.name;
+        try {
+          await window.jaguar.transferEnqueue({
+            sessionId: session.sessionId,
+            direction,
+            sourcePath,
+            destDir,
+            name: entry.name,
+            isDirectory: entry.kind === "directory",
+          });
+        } catch (e) {
+          setToast(e instanceof Error ? e.message : "Could not start the transfer.");
+        }
+      }
+    },
+    [session, paths, localSep]
+  );
+
+  // When a task finishes, bump the destination pane's reload key so it re-lists.
+  const prevStatuses = useMemo(() => new Map<string, string>(), []);
+  const [localReload, setLocalReload] = useState(0);
+  const [remoteReload, setRemoteReload] = useState(0);
+  useEffect(() => {
+    for (const t of tasks.values()) {
+      const prev = prevStatuses.get(t.id);
+      if (prev !== "completed" && t.status === "completed") {
+        if (t.direction === "upload") setRemoteReload((k) => k + 1);
+        else setLocalReload((k) => k + 1);
+      }
+      prevStatuses.set(t.id, t.status);
+    }
+  }, [tasks, prevStatuses]);
+
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-head">
           <strong>Sites</strong>
-          <button className="secondary" onClick={() => setEditing({ site: null })}>+ New</button>
+          <span style={{ flex: 1 }} />
+          <button className="icon-btn" title="New site" aria-label="New site" onClick={() => setEditing({ site: null })}>
+            <PlusIcon />
+          </button>
         </div>
         <div className="site-list">
           {sites.length === 0 ? (
@@ -118,11 +213,26 @@ export function App() {
                   <div className="site-sub">{s.username}@{s.host}:{s.port}</div>
                 </div>
                 <div className="site-actions">
-                  <button className="secondary" disabled={connectingId === s.id} onClick={() => void connect(s)}>
-                    {connectingId === s.id ? "…" : "Connect"}
+                  <button
+                    className="icon-btn"
+                    title="Connect"
+                    aria-label={`Connect to ${s.name}`}
+                    disabled={connectingId === s.id}
+                    onClick={() => void connect(s)}
+                  >
+                    <ConnectIcon />
                   </button>
-                  <button className="secondary" onClick={() => setEditing({ site: s })}>Edit</button>
-                  <button className="secondary" onClick={() => void removeSite(s)}>✕</button>
+                  <button className="icon-btn" title="Edit" aria-label={`Edit ${s.name}`} onClick={() => setEditing({ site: s })}>
+                    <RenameIcon />
+                  </button>
+                  <button
+                    className="icon-btn danger-text"
+                    title="Delete site"
+                    aria-label={`Delete ${s.name}`}
+                    onClick={() => setSiteToDelete(s)}
+                  >
+                    <TrashIcon />
+                  </button>
                 </div>
               </div>
             ))
@@ -140,12 +250,26 @@ export function App() {
               <button className="secondary" onClick={() => void disconnect()}>Disconnect</button>
             </>
           )}
+          <button className="icon-btn" title="Settings" aria-label="Settings" onClick={() => setShowSettings(true)}>
+            <SettingsIcon />
+          </button>
         </div>
 
         <div className="panes">
           <div className="pane-wrap">
             {localHome ? (
-              <FilePane title="Local" ops={localOps} initialPath={localHome} onError={setToast} />
+              <FilePane
+                title="Local"
+                side="local"
+                ops={localOps}
+                initialPath={localHome}
+                onError={setToast}
+                transferEnabled={!!session}
+                transferLabel="Upload →"
+                onTransfer={(fromSide, fromDir, entries) => void enqueueTransfer(fromSide, fromDir, entries)}
+                onPathChange={onPanePath}
+                reloadKey={localReload}
+              />
             ) : (
               <div className="empty">Loading local files…</div>
             )}
@@ -156,9 +280,15 @@ export function App() {
               <FilePane
                 key={session.sessionId}
                 title={`Remote — ${session.site.name}`}
+                side="remote"
                 ops={remoteOps}
                 initialPath={session.cwd}
                 onError={setToast}
+                transferEnabled={true}
+                transferLabel="← Download"
+                onTransfer={(fromSide, fromDir, entries) => void enqueueTransfer(fromSide, fromDir, entries)}
+                onPathChange={onPanePath}
+                reloadKey={remoteReload}
               />
             ) : (
               <div className="empty big">
@@ -167,6 +297,23 @@ export function App() {
             )}
           </div>
         </div>
+
+        <TransferQueue
+          tasks={[...tasks.values()].sort((a, b) => a.name.localeCompare(b.name))}
+          onCancel={(id) => void window.jaguar.transferCancel(id)}
+          onPause={(id) => void window.jaguar.transferPause(id)}
+          onResume={(id) => void window.jaguar.transferResume(id)}
+          onClearFinished={() => {
+            void window.jaguar.transferClearFinished();
+            setTasks((prev) => {
+              const next = new Map<string, import("./shared/types").TransferTask>();
+              for (const [id, t] of prev) {
+                if (t.status !== "completed" && t.status !== "canceled" && t.status !== "error") next.set(id, t);
+              }
+              return next;
+            });
+          }}
+        />
       </main>
 
       {editing && (
@@ -184,6 +331,27 @@ export function App() {
           prompt={hostKey.prompt}
           onTrust={() => void trustAndConnect()}
           onCancel={() => setHostKey(null)}
+        />
+      )}
+      {showSettings && settings && (
+        <SettingsDialog
+          settings={settings}
+          onChange={(patch) => void updateSettings(patch)}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+      {siteToDelete && (
+        <ConfirmDialog
+          title={`Delete site “${siteToDelete.name}”?`}
+          message={`This removes the saved connection for ${siteToDelete.username}@${siteToDelete.host} and its stored credentials. This cannot be undone. (Files on the server are not affected.)`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => {
+            const s = siteToDelete;
+            setSiteToDelete(null);
+            void removeSite(s);
+          }}
+          onCancel={() => setSiteToDelete(null)}
         />
       )}
       {toast && <div className="toast">{toast}</div>}

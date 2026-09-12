@@ -7,6 +7,8 @@ import type {
   RemoteListing,
   ConnectResult,
   HostKeyPrompt,
+  TransferRequest,
+  TransferTask,
 } from "./types";
 
 /** App-level settings persisted to ~/.jaguartransfer-settings.json. */
@@ -52,6 +54,16 @@ export interface JaguarApi {
   localMkdir(parentPath: string, name: string): Promise<void>;
   localDelete(path: string): Promise<void>;
 
+  // Transfers
+  transferEnqueue(req: TransferRequest): Promise<string>;
+  transferCancel(id: string): Promise<void>;
+  transferPause(id: string): Promise<void>;
+  transferResume(id: string): Promise<void>;
+  transferList(): Promise<TransferTask[]>;
+  transferClearFinished(): Promise<void>;
+  /** Subscribe to per-task progress updates. Returns an unsubscribe function. */
+  onTransferProgress(cb: (task: TransferTask) => void): () => void;
+
   // Utilities
   openExternal(url: string): Promise<void>;
 }
@@ -75,5 +87,13 @@ export const IPC = {
   localRename: "local:rename",
   localMkdir: "local:mkdir",
   localDelete: "local:delete",
+  transferEnqueue: "transfer:enqueue",
+  transferCancel: "transfer:cancel",
+  transferPause: "transfer:pause",
+  transferResume: "transfer:resume",
+  transferList: "transfer:list",
+  transferClearFinished: "transfer:clearFinished",
+  /** main → renderer push channel for progress updates. */
+  transferProgress: "transfer:progress",
   openExternal: "app:open-external",
 } as const;

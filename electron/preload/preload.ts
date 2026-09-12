@@ -4,7 +4,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../../src/shared/ipc.js";
 import type { AppSettings, JaguarApi } from "../../src/shared/ipc.js";
-import type { SiteInput, HostKeyPrompt } from "../../src/shared/types.js";
+import type { SiteInput, HostKeyPrompt, TransferRequest, TransferTask } from "../../src/shared/types.js";
 
 const api: JaguarApi = {
   getSettings: () => ipcRenderer.invoke(IPC.getSettings),
@@ -30,6 +30,18 @@ const api: JaguarApi = {
   localRename: (fromPath: string, toName: string) => ipcRenderer.invoke(IPC.localRename, fromPath, toName),
   localMkdir: (parentPath: string, name: string) => ipcRenderer.invoke(IPC.localMkdir, parentPath, name),
   localDelete: (path: string) => ipcRenderer.invoke(IPC.localDelete, path),
+
+  transferEnqueue: (req: TransferRequest) => ipcRenderer.invoke(IPC.transferEnqueue, req),
+  transferCancel: (id: string) => ipcRenderer.invoke(IPC.transferCancel, id),
+  transferPause: (id: string) => ipcRenderer.invoke(IPC.transferPause, id),
+  transferResume: (id: string) => ipcRenderer.invoke(IPC.transferResume, id),
+  transferList: () => ipcRenderer.invoke(IPC.transferList),
+  transferClearFinished: () => ipcRenderer.invoke(IPC.transferClearFinished),
+  onTransferProgress: (cb: (task: TransferTask) => void) => {
+    const listener = (_e: unknown, task: TransferTask) => cb(task);
+    ipcRenderer.on(IPC.transferProgress, listener);
+    return () => ipcRenderer.removeListener(IPC.transferProgress, listener);
+  },
 
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
 };
