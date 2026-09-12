@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import type { FsEntry, FsListing } from "../shared/types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PromptDialog } from "./PromptDialog";
-import { UpArrowIcon, ReloadIcon, NewFolderIcon, RenameIcon, TrashIcon, FolderEntryIcon, FileEntryIcon, SymlinkEntryIcon } from "./Icons";
+import { UpArrowIcon, ReloadIcon, NewFolderIcon, RenameIcon, TrashIcon, FolderEntryIcon, FileEntryIcon, SymlinkEntryIcon, TreeIcon } from "./Icons";
+import { DirTree } from "./DirTree";
 
 /** Filesystem operations for one side (local or remote), injected by the app so
  *  the pane is side-agnostic. Paths are POSIX for remote and native for local. */
@@ -35,6 +36,8 @@ interface Props {
   reloadKey?: number;
   /** Show dotfiles (names starting with "."). When false they're hidden. */
   showHidden: boolean;
+  /** Where directories sort relative to files. */
+  directorySort: "top" | "inline" | "bottom";
 }
 
 function fmtSize(bytes: number, kind: FsEntry["kind"]): string {
@@ -83,7 +86,7 @@ function joinPath(base: string, child: string, sep: string): string {
 
 /** A directory view (local or remote) with navigate, refresh, new folder,
  *  rename, and delete (with confirmation). */
-export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey, showHidden }: Props) {
+export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey, showHidden, directorySort }: Props) {
   const [path, setPath] = useState(initialPath);
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -95,6 +98,12 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
   const [dragOver, setDragOver] = useState(false);
   // Width (px) of the resizable Name column.
   const [nameWidth, setNameWidth] = useState(260);
+  // Directory-tree viewer: visibility + the root path it's anchored at.
+  const [treeVisible, setTreeVisible] = useState(false);
+  const [treeRoot, setTreeRoot] = useState(initialPath);
+  // Height (px) of the directory-tree panel (resizable via the divider below it).
+  const [treeHeight, setTreeHeight] = useState(200);
+  const paneRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<"name" | "size" | "modified">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -107,10 +116,16 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
 
   const sortedEntries = useMemo(() => {
     const visible = showHidden ? entries : entries.filter((e) => !e.name.startsWith("."));
-    const dirWeight = (e: FsEntry) => (e.kind === "directory" ? 0 : 1);
+    // Directory grouping: top = dirs before files, bottom = dirs after files,
+    // inline = no grouping (dirs sort with files by the active column).
+    const dirRank = (e: FsEntry) => {
+      if (directorySort === "inline") return 0;
+      const isDir = e.kind === "directory";
+      if (directorySort === "bottom") return isDir ? 1 : 0;
+      return isDir ? 0 : 1; // "top"
+    };
     const cmp = (a: FsEntry, b: FsEntry) => {
-      // Directories first, always.
-      const dw = dirWeight(a) - dirWeight(b);
+      const dw = dirRank(a) - dirRank(b);
       if (dw !== 0) return dw;
       let r = 0;
       if (sortKey === "name") r = a.name.localeCompare(b.name);
@@ -120,7 +135,7 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
       return sortDir === "asc" ? r : -r;
     };
     return [...visible].sort(cmp);
-  }, [entries, sortKey, sortDir, showHidden]);
+  }, [entries, sortKey, sortDir, showHidden, directorySort]);
 
   const sortMark = (key: "name" | "size" | "modified") =>
     key === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
@@ -143,6 +158,30 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     document.body.style.cursor = "col-resize";
+  };
+
+  /** Drag the horizontal divider to resize the directory-tree panel height.
+   *  Clamped so the file list below always keeps a usable minimum height. */
+  const startTreeResize = (e: MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = treeHeight;
+    // Leave room for the toolbar/path/divider (~110px) plus a 140px minimum
+    // file list, so the divider and list can never be dragged off-screen.
+    const paneH = paneRef.current?.clientHeight ?? 600;
+    const maxTree = Math.max(80, paneH - 110 - 140);
+    const onMove = (ev: globalThis.MouseEvent) => {
+      const h = Math.max(80, Math.min(maxTree, startH + (ev.clientY - startY)));
+      setTreeHeight(h);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "row-resize";
   };
 
   const load = useCallback(
@@ -261,6 +300,7 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
 
   return (
     <div
+      ref={paneRef}
       className={"pane" + (dragOver ? " drag-over" : "")}
       onDragOver={(e) => {
         // Accept drops that originate from the OTHER pane.
@@ -287,6 +327,20 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
     >
       <div className="pane-toolbar">
         <span className="pane-title">{title}</span>
+        <button
+          className={"icon-btn" + (treeVisible ? " active" : "")}
+          title="Toggle directory tree"
+          aria-label="Toggle directory tree"
+          aria-pressed={treeVisible}
+          onClick={() => {
+            setTreeVisible((v) => {
+              if (!v) setTreeRoot(path); // anchor the tree at the current dir when opening
+              return !v;
+            });
+          }}
+        >
+          <TreeIcon />
+        </button>
         <button className="icon-btn" title="Parent folder" aria-label="Parent folder" onClick={() => void load(joinPath(path, "..", ops.sep))}>
           <UpArrowIcon />
         </button>
@@ -315,6 +369,22 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
         )}
       </div>
       <div className="pane-path" title={path}>{path}{loading ? "  (loading…)" : ""}</div>
+      {treeVisible && (
+        <>
+          <div className="tree-panel" style={{ height: treeHeight }}>
+            <DirTree
+              key={`${treeRoot}:${showHidden}`}
+              ops={{ list: ops.list, sep: ops.sep }}
+              root={treeRoot}
+              currentPath={path}
+              onSelect={(p) => void load(p)}
+              onError={onError}
+              showHidden={showHidden}
+            />
+          </div>
+          <div className="tree-divider" title="Drag to resize" onMouseDown={startTreeResize} />
+        </>
+      )}
       <div className="pane-list">
         <table className="file-table" style={{ tableLayout: "fixed" }}>
           <colgroup>
@@ -326,13 +396,15 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
           <thead>
             <tr>
               <th className="sortable name-th" onClick={() => clickHeader("name")}>
-                <span className="th-label">Name{sortMark("name")}</span>
-                <span
-                  className="col-resizer"
-                  title="Drag to resize"
-                  onMouseDown={startNameResize}
-                  onClick={(e) => e.stopPropagation()}
-                />
+                <span className="name-th-inner">
+                  <span className="th-label">Name{sortMark("name")}</span>
+                  <span
+                    className="col-resizer"
+                    title="Drag to resize"
+                    onMouseDown={startNameResize}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </span>
               </th>
               <th className="num sortable" onClick={() => clickHeader("size")}>Size{sortMark("size")}</th>
               <th className="sortable" onClick={() => clickHeader("modified")}>Modified{sortMark("modified")}</th>

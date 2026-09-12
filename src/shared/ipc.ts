@@ -17,6 +17,8 @@ export interface AppSettings {
   windowBounds?: { width: number; height: number; x?: number; y?: number };
   /** Show dotfiles (names starting with ".") in the file panes. Default off. */
   showHiddenFiles?: boolean;
+  /** Where directories appear in the file list relative to files. Default "top". */
+  directorySort?: "top" | "inline" | "bottom";
   /** Max concurrent transfers (used later, M3). */
   maxConcurrentTransfers?: number;
   /** License info (set via a future License dialog). */

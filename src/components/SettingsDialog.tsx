@@ -31,6 +31,18 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           Show hidden files (names starting with “.”)
         </label>
 
+        <div className="field">
+          <label>Directories in file list</label>
+          <select
+            value={settings.directorySort ?? "top"}
+            onChange={(e) => onChange({ directorySort: e.target.value as "top" | "inline" | "bottom" })}
+          >
+            <option value="top">At the top</option>
+            <option value="inline">Inline (sorted with files)</option>
+            <option value="bottom">At the bottom</option>
+          </select>
+        </div>
+
         <div className="dialog-actions">
           <button onClick={onClose}>Done</button>
         </div>

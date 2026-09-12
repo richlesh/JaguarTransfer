@@ -276,6 +276,7 @@ export function App() {
                 onPathChange={onPanePath}
                 reloadKey={localReload}
                 showHidden={!!settings?.showHiddenFiles}
+                directorySort={settings?.directorySort ?? "top"}
               />
             ) : (
               <div className="empty">Loading local files…</div>
@@ -297,6 +298,7 @@ export function App() {
                 onPathChange={onPanePath}
                 reloadKey={remoteReload}
                 showHidden={!!settings?.showHiddenFiles}
+                directorySort={settings?.directorySort ?? "top"}
               />
             ) : (
               <div className="empty big">

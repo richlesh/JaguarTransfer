@@ -94,6 +94,21 @@ export function PlusIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** Tree — toggle the directory-tree viewer (a small hierarchy glyph). */
+export function TreeIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      style={{ display: "block" }}>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="12" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <path d="M6 8v9a1 1 0 0 0 1 1h9" />
+      <path d="M6 11h10" />
+    </svg>
+  );
+}
+
 /** Connect — a plug/power symbol. */
 export function ConnectIcon({ size = 18 }: IconProps) {
   return (

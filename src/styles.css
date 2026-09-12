@@ -163,7 +163,7 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
-.pane-list { overflow: auto; flex: 1; }
+.pane-list { overflow: auto; flex: 1; min-height: 80px; }
 
 .file-table { width: 100%; border-collapse: collapse; }
 .file-table th, .file-table td {
@@ -176,17 +176,30 @@ button.secondary.tiny { padding: 2px 8px; font-size: 12px; }
 .file-table th.sortable { cursor: pointer; user-select: none; }
 .file-table th.sortable:hover { color: var(--accent); }
 
-/* Resizable Name column: header holds a drag handle at its right edge. */
-.file-table th.name-th { position: relative; padding-right: 14px; }
+/* Resizable Name column: keep the header sticky (don't make the th relative,
+   which would override position:sticky). Anchor the drag handle to an inner
+   wrapper instead. */
+.file-table th.name-th { padding-right: 14px; }
+.file-table th.name-th .name-th-inner { position: relative; display: block; }
 .file-table .col-resizer {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: 100%;
+  top: -6px;
+  right: -14px;
+  width: 9px;
+  height: 34px;
   cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.file-table .col-resizer:hover { background: var(--accent); opacity: 0.4; }
+/* A visible 50% gray divider bar in the middle of the grab area. */
+.file-table .col-resizer::before {
+  content: "";
+  width: 2px;
+  height: 60%;
+  background: gray;
+}
+.file-table .col-resizer:hover::before { background: var(--accent); width: 3px; height: 80%; }
 /* With table-layout:fixed, truncate long cell text with an ellipsis. */
 .file-table td { overflow: hidden; text-overflow: ellipsis; }
 .file-table .entry-cell { overflow: hidden; }
@@ -232,6 +245,49 @@ button.icon-btn {
   border-radius: 6px;
 }
 button.icon-btn:hover:not(:disabled) { background: var(--row-hover); border-color: var(--border); }
+button.icon-btn.active { background: var(--row-selected); border-color: var(--border); color: var(--accent); }
+
+/* Directory-tree viewer (above the file list). */
+.tree-panel {
+  overflow: auto;
+  background: var(--bg);
+  flex: none;
+  /* Safety net: never let the tree consume the pane, even if a stale height is
+     larger than the pane after a window resize. */
+  max-height: 65%;
+}
+/* Draggable horizontal divider between the tree panel and the file list. */
+.tree-divider {
+  height: 6px;
+  flex: none;
+  background: var(--border);
+  cursor: row-resize;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.tree-divider:hover { background: var(--accent); opacity: 0.5; }
+.dir-tree { padding: 4px 0; font-size: 13px; }
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tree-row:hover { background: var(--row-hover); }
+.tree-row.current { background: var(--row-selected); font-weight: 600; }
+.tree-caret {
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 10px;
+  flex: none;
+  cursor: pointer;
+}
+.tree-folder-icon { display: inline-flex; color: var(--accent); flex: none; }
+.tree-label { overflow: hidden; text-overflow: ellipsis; }
+.tree-loading { color: var(--muted); font-size: 12px; padding: 2px 0; }
 button.icon-btn.danger-text { color: var(--danger); }
 button.icon-btn.danger-text:hover:not(:disabled) { background: rgba(229, 72, 77, 0.12); }
 button.icon-btn:disabled { opacity: 0.4; }
