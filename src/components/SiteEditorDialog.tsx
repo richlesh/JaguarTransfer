@@ -20,6 +20,14 @@ export function SiteEditorDialog({ site, onCancel, onSaved }: Props) {
   const [startDir, setStartDir] = useState(site?.startDir ?? "");
   const [compression, setCompression] = useState(!!site?.compression);
   const [secret, setSecret] = useState("");
+  // Jump host / bastion.
+  const [jumpEnabled, setJumpEnabled] = useState(!!site?.jump?.enabled);
+  const [jumpHost, setJumpHost] = useState(site?.jump?.host ?? "");
+  const [jumpPort, setJumpPort] = useState(String(site?.jump?.port ?? 22));
+  const [jumpUser, setJumpUser] = useState(site?.jump?.username ?? "");
+  const [jumpAuth, setJumpAuth] = useState<AuthMethod>(site?.jump?.authMethod ?? "password");
+  const [jumpKeyPath, setJumpKeyPath] = useState(site?.jump?.privateKeyPath ?? "");
+  const [jumpSecret, setJumpSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const secretLabel =
@@ -34,6 +42,13 @@ export function SiteEditorDialog({ site, onCancel, onSaved }: Props) {
     if (authMethod === "key" && !privateKeyPath.trim()) {
       return setError("Choose a private key file for key authentication.");
     }
+    if (jumpEnabled) {
+      if (!jumpHost.trim()) return setError("Enter the jump host, or disable it.");
+      if (!jumpUser.trim()) return setError("Enter the jump host username.");
+      if (jumpAuth === "key" && !jumpKeyPath.trim()) {
+        return setError("Choose a private key file for the jump host.");
+      }
+    }
     const input: SiteInput = {
       id: site?.id,
       name: name.trim(),
@@ -45,6 +60,17 @@ export function SiteEditorDialog({ site, onCancel, onSaved }: Props) {
       startDir: startDir.trim() || undefined,
       compression,
       secret: secret.length > 0 ? secret : undefined,
+      jump: jumpEnabled
+        ? {
+            enabled: true,
+            host: jumpHost.trim(),
+            port: Number(jumpPort) || 22,
+            username: jumpUser.trim(),
+            authMethod: jumpAuth,
+            privateKeyPath: jumpAuth === "key" ? jumpKeyPath.trim() : undefined,
+          }
+        : undefined,
+      jumpSecret: jumpEnabled && jumpSecret.length > 0 ? jumpSecret : undefined,
     };
     try {
       await window.transferJaguar.saveSite(input);
@@ -114,6 +140,54 @@ export function SiteEditorDialog({ site, onCancel, onSaved }: Props) {
           <input type="checkbox" checked={compression} onChange={(e) => setCompression(e.target.checked)} />
           Enable compression (helps on slow links)
         </label>
+
+        <label className="check-row">
+          <input type="checkbox" checked={jumpEnabled} onChange={(e) => setJumpEnabled(e.target.checked)} />
+          Connect through a jump host (bastion)
+        </label>
+        {jumpEnabled && (
+          <div className="jump-section">
+            <div style={{ display: "flex", gap: 8 }}>
+              <div className="field" style={{ flex: 3 }}>
+                <label>Jump host</label>
+                <input value={jumpHost} placeholder="bastion.example.com" onChange={(e) => setJumpHost(e.target.value)} />
+              </div>
+              <div className="field" style={{ flex: 1 }}>
+                <label>Port</label>
+                <input value={jumpPort} onChange={(e) => setJumpPort(e.target.value)} />
+              </div>
+            </div>
+            <div className="field">
+              <label>Jump username</label>
+              <input value={jumpUser} onChange={(e) => setJumpUser(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Jump authentication</label>
+              <select value={jumpAuth} onChange={(e) => setJumpAuth(e.target.value as AuthMethod)}>
+                <option value="password">Password</option>
+                <option value="key">Private key</option>
+                <option value="agent">SSH agent</option>
+              </select>
+            </div>
+            {jumpAuth === "key" && (
+              <div className="field">
+                <label>Jump private key path</label>
+                <input value={jumpKeyPath} placeholder="~/.ssh/id_ed25519" onChange={(e) => setJumpKeyPath(e.target.value)} />
+              </div>
+            )}
+            {jumpAuth !== "agent" && (
+              <div className="field">
+                <label>{jumpAuth === "password" ? "Jump password" : "Jump key passphrase (optional)"}</label>
+                <input
+                  type="password"
+                  value={jumpSecret}
+                  placeholder={site?.jump ? "•••••• (leave blank to keep current)" : ""}
+                  onChange={(e) => setJumpSecret(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <div className="error">{error}</div>}
         <div className="dialog-actions">

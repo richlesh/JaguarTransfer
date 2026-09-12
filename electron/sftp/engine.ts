@@ -10,13 +10,15 @@ import { Client } from "ssh2";
 import type { SFTPWrapper, ConnectConfig } from "ssh2";
 import type { Site, RemoteEntry, RemoteListing, HostKeyPrompt } from "../../src/shared/types.js";
 import { verifyHostKey } from "../knownHosts.js";
-import { getSecret } from "../secrets.js";
+import { getSecret, jumpAccount } from "../secrets.js";
 
 interface Session {
   id: string;
   site: Site;
   client: Client;
   sftp: SFTPWrapper;
+  /** The bastion client when connected through a jump host (closed on disconnect). */
+  bastion?: Client;
   /** Set when the user explicitly disconnected — suppresses auto-reconnect. */
   userClosed: boolean;
   /** True while a reconnect loop is running. */
@@ -68,20 +70,106 @@ export type EngineConnectResult =
  * secret. Supports: key (+ optional passphrase), ssh-agent, and
  * password/keyboard-interactive.
  */
-function buildAuth(site: Site): Partial<ConnectConfig> {
-  const secret = getSecret(site.id) ?? undefined;
-  if (site.authMethod === "agent") {
-    // Use the running agent. On Windows, ssh2 accepts the named-pipe constant.
+/**
+ * Build the ssh2 auth part of a connect config for the given auth method, key
+ * path, and keychain account (the account under which the secret is stored).
+ * Works for both the target site and a jump host (bastion).
+ */
+function buildAuthFor(
+  authMethod: Site["authMethod"],
+  privateKeyPath: string | undefined,
+  secretAccount: string
+): Partial<ConnectConfig> {
+  const secret = getSecret(secretAccount) ?? undefined;
+  if (authMethod === "agent") {
     const agent = process.env.SSH_AUTH_SOCK || (process.platform === "win32" ? "pageant" : undefined);
     return { agent, agentForward: false };
   }
-  if (site.authMethod === "key") {
-    if (!site.privateKeyPath) throw new Error("This site uses key auth but has no private key path.");
-    const privateKey = readFileSync(expandHome(site.privateKeyPath));
+  if (authMethod === "key") {
+    if (!privateKeyPath) throw new Error("Key auth selected but no private key path was provided.");
+    const privateKey = readFileSync(expandHome(privateKeyPath));
     return secret ? { privateKey, passphrase: secret } : { privateKey };
   }
-  // password (with keyboard-interactive fallback handled below)
   return { password: secret };
+}
+
+/** Auth config for the target site (secret stored under the site id). */
+function buildAuth(site: Site): Partial<ConnectConfig> {
+  return buildAuthFor(site.authMethod, site.privateKeyPath, site.id);
+}
+
+/** Result of dialing a bastion: a tunneled socket to the target, plus the
+ *  bastion client (to close on disconnect), OR a host-key prompt / error. */
+type BastionDial =
+  | { ok: true; sock: import("ssh2").ClientChannel; bastion: Client }
+  | { ok: false; needsHostKeyTrust: true; prompt: HostKeyPrompt }
+  | { ok: false; error: string };
+
+/**
+ * Connect to the jump host and open a forwarded channel to the target host:port.
+ * The returned `sock` is handed to the target ssh2 client as its transport, so
+ * the SSH session runs end-to-end through the bastion. Verifies the bastion's
+ * host key via TOFU (prompting for its own host:port when untrusted).
+ */
+function dialBastion(site: Site): Promise<BastionDial> {
+  const jump = site.jump!;
+  return new Promise((resolve) => {
+    const bastion = new Client();
+    let settled = false;
+    let pendingPrompt: HostKeyPrompt | null = null;
+    const done = (r: BastionDial) => {
+      if (settled) return;
+      settled = true;
+      if (!r.ok) { try { bastion.end(); } catch { /* noop */ } }
+      resolve(r);
+    };
+
+    let auth: Partial<ConnectConfig>;
+    try {
+      auth = buildAuthFor(jump.authMethod, jump.privateKeyPath, jumpAccount(site.id));
+    } catch (e) {
+      return done({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+
+    bastion.on("keyboard-interactive", (_n, _i, _l, _p, cb) => cb([getSecret(jumpAccount(site.id)) ?? ""]));
+    bastion.on("ready", () => {
+      bastion.forwardOut("127.0.0.1", 0, site.host, site.port || 22, (err, stream) => {
+        if (err) return done({ ok: false, error: `Jump host could not reach ${site.host}: ${err.message}` });
+        done({ ok: true, sock: stream, bastion });
+      });
+    });
+    bastion.on("error", (err: Error) => {
+      if (pendingPrompt) done({ ok: false, needsHostKeyTrust: true, prompt: pendingPrompt });
+      else done({ ok: false, error: `Jump host: ${err.message}` });
+    });
+
+    try {
+      bastion.connect({
+        host: jump.host,
+        port: jump.port || 22,
+        username: jump.username,
+        readyTimeout: 20000,
+        keepaliveInterval: 15000,
+        tryKeyboard: jump.authMethod === "password",
+        ...auth,
+        hostVerifier: (keyBuf: Buffer) => {
+          const fp = fingerprintSha256(keyBuf);
+          const status = verifyHostKey(jump.host, jump.port || 22, fp);
+          if (status === "trusted") return true;
+          pendingPrompt = {
+            host: jump.host,
+            port: jump.port || 22,
+            keyType: detectKeyType(keyBuf),
+            fingerprintSha256: fp,
+            changed: status === "changed",
+          };
+          return false;
+        },
+      });
+    } catch (e) {
+      done({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  });
 }
 
 /**
@@ -91,91 +179,106 @@ function buildAuth(site: Site): Partial<ConnectConfig> {
  */
 export function connect(site: Site): Promise<EngineConnectResult> {
   return new Promise((resolve) => {
-    const client = new Client();
-    let settled = false;
-    const done = (r: EngineConnectResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(r);
-    };
+    void (async () => {
+      let settled = false;
+      const done = (r: EngineConnectResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
 
-    const auth = (() => {
-      try {
-        return buildAuth(site);
-      } catch (e) {
-        return e instanceof Error ? e : new Error(String(e));
+      // If a jump host is enabled, dial it first and tunnel to the target.
+      let sock: import("ssh2").ClientChannel | undefined;
+      let bastion: Client | undefined;
+      if (site.jump?.enabled) {
+        const dial = await dialBastion(site);
+        if (!dial.ok) return done(dial);
+        sock = dial.sock;
+        bastion = dial.bastion;
       }
-    })();
-    if (auth instanceof Error) {
-      done({ ok: false, error: auth.message });
-      return;
-    }
 
-    let pendingPrompt: HostKeyPrompt | null = null;
-    const config: ConnectConfig = {
-      host: site.host,
-      port: site.port || 22,
-      username: site.username,
-      readyTimeout: 20000,
-      keepaliveInterval: 15000,
-      tryKeyboard: site.authMethod === "password",
-      ...(site.compression ? { algorithms: { compress: ["zlib@openssh.com", "zlib", "none"] } } : {}),
-      ...auth,
-      hostVerifier: (keyBuf: Buffer) => {
-        const fp = fingerprintSha256(keyBuf);
-        const status = verifyHostKey(site.host, site.port || 22, fp);
-        if (status === "trusted") return true;
-        pendingPrompt = {
-          host: site.host,
-          port: site.port || 22,
-          keyType: detectKeyType(keyBuf),
-          fingerprintSha256: fp,
-          changed: status === "changed",
-        };
-        return false;
-      },
-    };
-
-    client.on("keyboard-interactive", (_name, _instr, _lang, _prompts, finish) => {
-      const secret = getSecret(site.id) ?? "";
-      finish([secret]);
-    });
-
-    client.on("ready", () => {
-      client.sftp((err, sftp) => {
-        if (err) {
-          client.end();
-          done({ ok: false, error: `SFTP subsystem failed: ${err.message}` });
-          return;
+      const client = new Client();
+      const auth = (() => {
+        try {
+          return buildAuth(site);
+        } catch (e) {
+          return e instanceof Error ? e : new Error(String(e));
         }
-        const id = randomUUID();
-        const session: Session = { id, site, client, sftp, userClosed: false, reconnecting: false };
-        sessions.set(id, session);
-        attachDropHandler(session);
-        const start = site.startDir?.trim();
-        if (start) {
-          done({ ok: true, sessionId: id, cwd: start });
+      })();
+      if (auth instanceof Error) {
+        try { bastion?.end(); } catch { /* noop */ }
+        return done({ ok: false, error: auth.message });
+      }
+
+      let pendingPrompt: HostKeyPrompt | null = null;
+      const config: ConnectConfig = {
+        host: site.host,
+        port: site.port || 22,
+        username: site.username,
+        readyTimeout: 20000,
+        keepaliveInterval: 15000,
+        tryKeyboard: site.authMethod === "password",
+        ...(sock ? { sock } : {}),
+        ...(site.compression ? { algorithms: { compress: ["zlib@openssh.com", "zlib", "none"] } } : {}),
+        ...auth,
+        hostVerifier: (keyBuf: Buffer) => {
+          const fp = fingerprintSha256(keyBuf);
+          const status = verifyHostKey(site.host, site.port || 22, fp);
+          if (status === "trusted") return true;
+          pendingPrompt = {
+            host: site.host,
+            port: site.port || 22,
+            keyType: detectKeyType(keyBuf),
+            fingerprintSha256: fp,
+            changed: status === "changed",
+          };
+          return false;
+        },
+      };
+
+      client.on("keyboard-interactive", (_name, _instr, _lang, _prompts, finish) => {
+        finish([getSecret(site.id) ?? ""]);
+      });
+
+      client.on("ready", () => {
+        client.sftp((err, sftp) => {
+          if (err) {
+            client.end();
+            try { bastion?.end(); } catch { /* noop */ }
+            done({ ok: false, error: `SFTP subsystem failed: ${err.message}` });
+            return;
+          }
+          const id = randomUUID();
+          const session: Session = { id, site, client, sftp, bastion, userClosed: false, reconnecting: false };
+          sessions.set(id, session);
+          attachDropHandler(session);
+          const start = site.startDir?.trim();
+          if (start) {
+            done({ ok: true, sessionId: id, cwd: start });
+          } else {
+            sftp.realpath(".", (rpErr, abs) => {
+              done({ ok: true, sessionId: id, cwd: rpErr ? "/" : abs });
+            });
+          }
+        });
+      });
+
+      client.on("error", (err: Error) => {
+        try { bastion?.end(); } catch { /* noop */ }
+        if (pendingPrompt) {
+          done({ ok: false, needsHostKeyTrust: true, prompt: pendingPrompt });
         } else {
-          sftp.realpath(".", (rpErr, abs) => {
-            done({ ok: true, sessionId: id, cwd: rpErr ? "/" : abs });
-          });
+          done({ ok: false, error: err.message });
         }
       });
-    });
 
-    client.on("error", (err: Error) => {
-      if (pendingPrompt) {
-        done({ ok: false, needsHostKeyTrust: true, prompt: pendingPrompt });
-      } else {
-        done({ ok: false, error: err.message });
+      try {
+        client.connect(config);
+      } catch (e) {
+        try { bastion?.end(); } catch { /* noop */ }
+        done({ ok: false, error: e instanceof Error ? e.message : String(e) });
       }
-    });
-
-    try {
-      client.connect(config);
-    } catch (e) {
-      done({ ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
+    })();
   });
 }
 
@@ -238,43 +341,59 @@ async function reconnect(session: Session): Promise<void> {
   sessions.delete(session.id);
 }
 
-/** One reconnection attempt: open a fresh client + SFTP and swap into `session`. */
+/** One reconnection attempt: open a fresh client + SFTP and swap into `session`.
+ *  Re-dials the bastion first when the site connects through a jump host. */
 function tryReestablish(session: Session): Promise<boolean> {
   return new Promise((resolve) => {
-    let config: ConnectConfig;
-    try {
-      config = buildConfig(session.site);
-    } catch {
-      resolve(false);
-      return;
-    }
-    const client = new Client();
-    let settled = false;
-    const finish = (v: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(v);
-    };
-    client.on("keyboard-interactive", (_n, _i, _l, _p, cb) => cb([getSecret(session.site.id) ?? ""]));
-    client.on("ready", () => {
-      client.sftp((err, sftp) => {
-        if (err) {
-          client.end();
-          return finish(false);
-        }
-        // Swap the live handles under the same session id.
-        try { session.client.removeAllListeners(); } catch { /* noop */ }
-        session.client = client;
-        session.sftp = sftp;
-        finish(true);
+    void (async () => {
+      let config: ConnectConfig;
+      try {
+        config = buildConfig(session.site);
+      } catch {
+        resolve(false);
+        return;
+      }
+
+      // Re-establish the bastion tunnel first, if used.
+      let newBastion: Client | undefined;
+      if (session.site.jump?.enabled) {
+        const dial = await dialBastion(session.site);
+        if (!dial.ok) return resolve(false);
+        config = { ...config, sock: dial.sock };
+        newBastion = dial.bastion;
+      }
+
+      const client = new Client();
+      let settled = false;
+      const finish = (v: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (!v) { try { newBastion?.end(); } catch { /* noop */ } }
+        resolve(v);
+      };
+      client.on("keyboard-interactive", (_n, _i, _l, _p, cb) => cb([getSecret(session.site.id) ?? ""]));
+      client.on("ready", () => {
+        client.sftp((err, sftp) => {
+          if (err) {
+            client.end();
+            return finish(false);
+          }
+          // Swap the live handles under the same session id; close the old bastion.
+          try { session.client.removeAllListeners(); } catch { /* noop */ }
+          try { session.bastion?.end(); } catch { /* noop */ }
+          session.client = client;
+          session.sftp = sftp;
+          session.bastion = newBastion;
+          finish(true);
+        });
       });
-    });
-    client.on("error", () => finish(false));
-    try {
-      client.connect(config);
-    } catch {
-      finish(false);
-    }
+      client.on("error", () => finish(false));
+      try {
+        client.connect(config);
+      } catch {
+        finish(false);
+      }
+    })();
   });
 }
 
@@ -298,6 +417,7 @@ export function disconnect(sessionId: string): void {
   } catch {
     // ignore
   }
+  try { s.bastion?.end(); } catch { /* noop */ }
   sessions.delete(sessionId);
 }
 

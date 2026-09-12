@@ -304,6 +304,11 @@ button.icon-btn:disabled { opacity: 0.4; }
   color: var(--text);
 }
 .check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0 10px; }
+.jump-section {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin: 0 0 10px 4px;
+}
 
 /* Dialogs */
 .dialog-backdrop {

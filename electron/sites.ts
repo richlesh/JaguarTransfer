@@ -39,7 +39,17 @@ function toStored(input: SiteInput, id: string): Site {
     privateKeyPath: input.privateKeyPath?.trim() || undefined,
     startDir: input.startDir?.trim() || undefined,
     compression: !!input.compression,
-    jumpHost: input.jumpHost?.trim() || undefined,
+    jump:
+      input.jump && input.jump.enabled && input.jump.host.trim()
+        ? {
+            enabled: true,
+            host: input.jump.host.trim(),
+            port: input.jump.port || 22,
+            username: input.jump.username.trim(),
+            authMethod: input.jump.authMethod,
+            privateKeyPath: input.jump.privateKeyPath?.trim() || undefined,
+          }
+        : undefined,
   };
 }
 

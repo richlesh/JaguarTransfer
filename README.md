@@ -32,7 +32,9 @@ This is the M1 scaffold:
 
 Planned next: local pane, rename/delete/mkdir on both sides (M2), the pipelined
 parallel transfer engine + queue (M3), resume/reconnect/compression tuning (M4),
-and packaging/signing polish (M5). Jump-host/bastion support is a fast-follow.
+and packaging/signing polish (M5). Jump-host/bastion connections are supported
+(connect through a bastion via SSH channel forwarding, with its own auth and
+host-key verification).
 
 ## Data & security
 

@@ -19,8 +19,20 @@ export interface Site {
   startDir?: string;
   /** Opt-in SSH compression (zlib@openssh.com) — helps on slow links. */
   compression?: boolean;
-  /** Jump host / bastion (fast-follow; stored now, honored later). */
-  jumpHost?: string;
+  /** Jump host / bastion: connect through this host to reach the target. */
+  jump?: JumpHost;
+}
+
+/** A jump host (bastion) the connection is tunneled through. Its secret
+ *  (password / key passphrase) lives in the keychain under `<siteId>:jump`. */
+export interface JumpHost {
+  enabled: boolean;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: AuthMethod;
+  /** For authMethod "key": absolute path to the bastion's private key file. */
+  privateKeyPath?: string;
 }
 
 /** Draft used to create/update a site (id optional on create). */
@@ -29,6 +41,9 @@ export interface SiteInput extends Omit<Site, "id"> {
   /** Transient secret provided by the UI at save time; routed to the keychain,
    *  never persisted in the settings JSON. Empty/undefined leaves it unchanged. */
   secret?: string;
+  /** Transient bastion secret (password / key passphrase); routed to the keychain
+   *  under `<siteId>:jump`. Empty/undefined leaves it unchanged. */
+  jumpSecret?: string;
 }
 
 /** One entry in a directory listing (local or remote share the same shape). */

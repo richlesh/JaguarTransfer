@@ -12,6 +12,11 @@ function entryFor(siteId: string): Entry {
   return new Entry(SERVICE, siteId);
 }
 
+/** Keychain account id for a site's jump-host (bastion) credential. */
+export function jumpAccount(siteId: string): string {
+  return `${siteId}:jump`;
+}
+
 /** Store (or replace) the secret for a site. */
 export function setSecret(siteId: string, secret: string): void {
   try {

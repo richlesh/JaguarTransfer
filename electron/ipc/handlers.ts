@@ -8,7 +8,7 @@ import type { AppSettings } from "../../src/shared/ipc.js";
 import type { SiteInput, HostKeyPrompt, TransferRequest } from "../../src/shared/types.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import { listSites, saveSite, deleteSite, getSite } from "../sites.js";
-import { setSecret, deleteSecret } from "../secrets.js";
+import { setSecret, deleteSecret, jumpAccount } from "../secrets.js";
 import { trustHostKey } from "../knownHosts.js";
 import { connect, disconnect, list, rename as remoteRename, mkdir as remoteMkdir, remove as remoteRemove } from "../sftp/engine.js";
 import * as localFs from "../local/fs.js";
@@ -28,14 +28,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.listSites, () => listSites());
   ipcMain.handle(IPC.saveSite, (_e, input: SiteInput) => {
     const site = saveSite(input);
-    // Route any provided secret to the keychain (never persisted in JSON).
+    // Route any provided secrets to the keychain (never persisted in JSON).
     if (typeof input.secret === "string" && input.secret.length > 0) {
       setSecret(site.id, input.secret);
+    }
+    if (typeof input.jumpSecret === "string" && input.jumpSecret.length > 0) {
+      setSecret(jumpAccount(site.id), input.jumpSecret);
     }
     return site;
   });
   ipcMain.handle(IPC.deleteSite, (_e, id: string) => {
     deleteSecret(id);
+    deleteSecret(jumpAccount(id));
     deleteSite(id);
   });
 
