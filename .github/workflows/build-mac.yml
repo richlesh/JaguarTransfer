@@ -64,17 +64,27 @@ jobs:
           CSC_KEY_PASSWORD: build-keychain-password
         run: |
           KEY_FILE=$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
-          printf '%s\n' "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
-          # Fail fast with a clear message if the App Store Connect API key secret
-          # is missing or not a valid PEM (notarytool otherwise dies with the
-          # opaque 'invalidPEMDocument'). The .p8 must include the BEGIN/END lines.
-          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_FILE"; then
-            echo "::error::APPLE_API_KEY secret is empty or not a valid .p8 PEM."
-            echo "It must be the full contents of your App Store Connect AuthKey_*.p8," \
-                 "including the -----BEGIN PRIVATE KEY----- / -----END PRIVATE KEY----- lines" \
-                 "and its newlines. Also confirm APPLE_API_KEY_ID and APPLE_API_ISSUER are set."
+          # Prefer a base64-encoded key secret (APPLE_API_KEY_BASE64) to avoid the
+          # newline mangling that produces notarytool's 'invalidPEMDocument'. Fall
+          # back to the raw-PEM secret (APPLE_API_KEY) for compatibility.
+          if [ -n "${{ secrets.APPLE_API_KEY_BASE64 }}" ]; then
+            echo "${{ secrets.APPLE_API_KEY_BASE64 }}" | base64 --decode > "$KEY_FILE"
+          else
+            printf '%s\n' "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
+          fi
+          # Validate the decoded .p8 is a well-formed PEM before notarizing, so a
+          # bad secret fails fast with a clear message instead of deep in notarytool.
+          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_FILE" || ! grep -q "END PRIVATE KEY" "$KEY_FILE"; then
+            echo "::error::App Store Connect API key is not a valid .p8 PEM."
+            echo "Set APPLE_API_KEY_BASE64 to 'base64 -i AuthKey_XXXX.p8' (recommended, no newline"
+            echo "issues), or APPLE_API_KEY to the full raw .p8 contents including the BEGIN/END"
+            echo "lines and line breaks. Also confirm APPLE_API_KEY_ID and APPLE_API_ISSUER."
             exit 1
           fi
+          # A valid .p8 base64 body should span multiple lines; warn if it's one
+          # long line (a common paste error that yields invalidPEMDocument).
+          BODY_LINES=$(sed '1d;$d' "$KEY_FILE" | grep -c .)
+          echo "API key PEM body lines: $BODY_LINES"
           APPLE_API_KEY="$KEY_FILE" ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload DMG to release
