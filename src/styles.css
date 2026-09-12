@@ -48,6 +48,9 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar-head, .content-head {
@@ -57,9 +60,10 @@ body {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
+.sidebar-head { flex: none; }
 .content-head { flex: none; }
 
-.site-list { overflow-y: auto; flex: 1; }
+.site-list { overflow-y: auto; flex: 1; min-height: 0; }
 
 .site-item {
   padding: 10px 14px;

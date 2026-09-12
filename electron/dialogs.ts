@@ -84,6 +84,12 @@ export function buildMenu(win: BrowserWindow): void {
             submenu: [
               { label: `About ${app.name}`, click: () => showAbout() },
               { type: "separator" as const },
+              {
+                label: "Settings…",
+                accelerator: "Cmd+,",
+                click: () => win.webContents.send("open-settings"),
+              },
+              { type: "separator" as const },
               { role: "hide" as const },
               { role: "quit" as const },
             ],
@@ -92,7 +98,19 @@ export function buildMenu(win: BrowserWindow): void {
       : []),
     {
       label: "File",
-      submenu: [isMac ? { role: "close" } : { role: "quit" }],
+      submenu: [
+        ...(!isMac
+          ? [
+              {
+                label: "Settings",
+                accelerator: "Ctrl+,",
+                click: () => win.webContents.send("open-settings"),
+              } as Electron.MenuItemConstructorOptions,
+              { type: "separator" as const },
+            ]
+          : []),
+        isMac ? { role: "close" } : { role: "quit" },
+      ],
     },
     {
       label: "Edit",
@@ -129,5 +147,4 @@ export function buildMenu(win: BrowserWindow): void {
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  void win; // reserved for future window-scoped items
 }

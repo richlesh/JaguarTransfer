@@ -389,14 +389,20 @@ export interface TransferControl {
   cancel(): void;
 }
 
-/** Drive a read→write stream pipe with progress, pause/resume, and cancel. */
+/** Drive a read→write transfer with progress, pause/resume, and cancel.
+ *
+ * We do NOT use stream.pipe() because pipe owns flow control and re-resumes the
+ * source on every destination 'drain', which defeats a manual pause(). Instead
+ * we consume the readable in flowing mode and manage backpressure + pause
+ * ourselves, so pause() reliably halts the byte flow until resume(). */
 function pipeStreams(
-  read: NodeJS.ReadableStream & { destroy?: (e?: Error) => void },
-  write: NodeJS.WritableStream & { destroy?: (e?: Error) => void },
+  read: NodeJS.ReadableStream & { destroy?: (e?: Error) => void; pause: () => void; resume: () => void },
+  write: NodeJS.WritableStream & { destroy?: (e?: Error) => void; end: () => void },
   onBytes: (transferred: number) => void
 ): TransferControl {
   let transferred = 0;
   let canceled = false;
+  let paused = false;
   let settled = false;
 
   const done = new Promise<"completed" | "canceled">((resolve, reject) => {
@@ -414,7 +420,17 @@ function pipeStreams(
     read.on("data", (chunk: Buffer) => {
       transferred += chunk.length;
       onBytes(transferred);
+      const ok = write.write(chunk);
+      // Backpressure: pause the source until the destination drains. Don't
+      // auto-resume while the user has paused us.
+      if (!ok && !canceled) {
+        read.pause();
+        write.once("drain", () => {
+          if (!paused && !canceled) read.resume();
+        });
+      }
     });
+    read.on("end", () => write.end());
     read.on("error", (e: Error) => {
       if (canceled) return finish("canceled");
       try { write.destroy?.(); } catch { /* noop */ }
@@ -426,17 +442,21 @@ function pipeStreams(
       fail(e);
     });
     write.on("finish", () => finish("completed"));
-    // If canceled, destroy() may emit 'close' without 'error'; resolve then too.
     write.on("close", () => { if (canceled) finish("canceled"); });
     read.on("close", () => { if (canceled) finish("canceled"); });
-
-    read.pipe(write);
   });
 
   return {
     done,
-    pause: () => read.pause?.(),
-    resume: () => read.resume?.(),
+    pause: () => {
+      paused = true;
+      read.pause();
+    },
+    resume: () => {
+      if (!paused || canceled) return;
+      paused = false;
+      read.resume();
+    },
     cancel: () => {
       canceled = true;
       try { read.destroy?.(); } catch { /* noop */ }

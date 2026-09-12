@@ -22,6 +22,15 @@ export function SettingsDialog({ settings, onChange, onClose }: Props) {
           </select>
         </div>
 
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={!!settings.showHiddenFiles}
+            onChange={(e) => onChange({ showHiddenFiles: e.target.checked })}
+          />
+          Show hidden files (names starting with “.”)
+        </label>
+
         <div className="dialog-actions">
           <button onClick={onClose}>Done</button>
         </div>

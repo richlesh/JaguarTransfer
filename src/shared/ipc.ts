@@ -15,6 +15,8 @@ import type {
 export interface AppSettings {
   theme: "light" | "dark";
   windowBounds?: { width: number; height: number; x?: number; y?: number };
+  /** Show dotfiles (names starting with ".") in the file panes. Default off. */
+  showHiddenFiles?: boolean;
   /** Max concurrent transfers (used later, M3). */
   maxConcurrentTransfers?: number;
   /** License info (set via a future License dialog). */
@@ -64,6 +66,9 @@ export interface JaguarApi {
   /** Subscribe to per-task progress updates. Returns an unsubscribe function. */
   onTransferProgress(cb: (task: TransferTask) => void): () => void;
 
+  /** Fired when the user picks Settings from the native menu. Returns unsubscribe. */
+  onOpenSettings(cb: () => void): () => void;
+
   // Utilities
   openExternal(url: string): Promise<void>;
 }
@@ -95,5 +100,7 @@ export const IPC = {
   transferClearFinished: "transfer:clearFinished",
   /** main → renderer push channel for progress updates. */
   transferProgress: "transfer:progress",
+  /** main → renderer: open the Settings dialog (from the native menu). */
+  openSettings: "open-settings",
   openExternal: "app:open-external",
 } as const;

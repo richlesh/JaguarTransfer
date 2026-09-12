@@ -42,6 +42,11 @@ const api: JaguarApi = {
     ipcRenderer.on(IPC.transferProgress, listener);
     return () => ipcRenderer.removeListener(IPC.transferProgress, listener);
   },
+  onOpenSettings: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(IPC.openSettings, listener);
+    return () => ipcRenderer.removeListener(IPC.openSettings, listener);
+  },
 
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
 };

@@ -33,6 +33,8 @@ interface Props {
   onPathChange?: (side: "local" | "remote", path: string) => void;
   /** Bump to force a re-list of the current directory (e.g. after a transfer). */
   reloadKey?: number;
+  /** Show dotfiles (names starting with "."). When false they're hidden. */
+  showHidden: boolean;
 }
 
 function fmtSize(bytes: number, kind: FsEntry["kind"]): string {
@@ -81,7 +83,7 @@ function joinPath(base: string, child: string, sep: string): string {
 
 /** A directory view (local or remote) with navigate, refresh, new folder,
  *  rename, and delete (with confirmation). */
-export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey }: Props) {
+export function FilePane({ title, ops, initialPath, onError, side, transferEnabled, transferLabel, onTransfer, onPathChange, reloadKey, showHidden }: Props) {
   const [path, setPath] = useState(initialPath);
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -101,6 +103,7 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
   };
 
   const sortedEntries = useMemo(() => {
+    const visible = showHidden ? entries : entries.filter((e) => !e.name.startsWith("."));
     const dirWeight = (e: FsEntry) => (e.kind === "directory" ? 0 : 1);
     const cmp = (a: FsEntry, b: FsEntry) => {
       // Directories first, always.
@@ -113,8 +116,8 @@ export function FilePane({ title, ops, initialPath, onError, side, transferEnabl
       if (r === 0) r = a.name.localeCompare(b.name); // stable tiebreak
       return sortDir === "asc" ? r : -r;
     };
-    return [...entries].sort(cmp);
-  }, [entries, sortKey, sortDir]);
+    return [...visible].sort(cmp);
+  }, [entries, sortKey, sortDir, showHidden]);
 
   const sortMark = (key: "name" | "size" | "modified") =>
     key === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";

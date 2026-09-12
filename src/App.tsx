@@ -49,6 +49,11 @@ export function App() {
     return unsub;
   }, []);
 
+  // Open Settings when chosen from the native menu.
+  useEffect(() => {
+    return window.jaguar.onOpenSettings(() => setShowSettings(true));
+  }, []);
+
   useEffect(() => {
     void refreshSites();
     void window.jaguar.localHome().then(setLocalHome);
@@ -270,6 +275,7 @@ export function App() {
                 onTransfer={(fromSide, fromDir, entries) => void enqueueTransfer(fromSide, fromDir, entries)}
                 onPathChange={onPanePath}
                 reloadKey={localReload}
+                showHidden={!!settings?.showHiddenFiles}
               />
             ) : (
               <div className="empty">Loading local files…</div>
@@ -290,6 +296,7 @@ export function App() {
                 onTransfer={(fromSide, fromDir, entries) => void enqueueTransfer(fromSide, fromDir, entries)}
                 onPathChange={onPanePath}
                 reloadKey={remoteReload}
+                showHidden={!!settings?.showHiddenFiles}
               />
             ) : (
               <div className="empty big">
