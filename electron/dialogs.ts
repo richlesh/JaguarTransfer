@@ -114,11 +114,12 @@ function showAbout(): void {
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   aboutWin.loadFile(join(app.getAppPath(), "dialogs", "about.html"));
-  aboutWin.once("ready-to-show", () => {
-    aboutWin?.show();
+  aboutWin.webContents.once("did-finish-load", () => {
     aboutWin?.webContents.send("icon-path", iconPath());
     aboutWin?.webContents.send("app-version", app.getVersion());
+    if (isLicensed()) aboutWin?.webContents.send("licensed");
   });
+  aboutWin.once("ready-to-show", () => aboutWin?.show());
   aboutWin.on("closed", () => (aboutWin = null));
 }
 

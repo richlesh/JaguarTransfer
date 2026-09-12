@@ -50,6 +50,7 @@
     <a id="issues" href="https://github.com/richlesh/TransferJaguar/issues">Report issues on GitHub</a>
   </p>
   <button id="ok-btn">OK</button>
+  <p id="thank-you" style="display:none;font-weight:600;">Thank you for donating to<br>Glowing Cat Software!</p>
 
   <script>
     const { ipcRenderer } = require("electron");
@@ -62,6 +63,7 @@
 
     ipcRenderer.on("icon-path", (_e, p) => (document.getElementById("icon").src = p));
     ipcRenderer.on("app-version", (_e, v) => (document.getElementById("app-version").textContent = v));
+    ipcRenderer.on("licensed", () => (document.getElementById("thank-you").style.display = ""));
 
     document.getElementById("website").addEventListener("click", (e) => {
       e.preventDefault();
