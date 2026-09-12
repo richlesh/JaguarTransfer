@@ -1,12 +1,12 @@
-// Preload: exposes a typed, minimal API on window.jaguar via contextBridge.
+// Preload: exposes a typed, minimal API on window.transferJaguar via contextBridge.
 // The renderer never gets direct Node/Electron access.
 
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC } from "../../src/shared/ipc.js";
-import type { AppSettings, JaguarApi } from "../../src/shared/ipc.js";
+import type { AppSettings, TransferJaguarApi } from "../../src/shared/ipc.js";
 import type { SiteInput, HostKeyPrompt, TransferRequest, TransferTask } from "../../src/shared/types.js";
 
-const api: JaguarApi = {
+const api: TransferJaguarApi = {
   getSettings: () => ipcRenderer.invoke(IPC.getSettings),
   saveSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke(IPC.saveSettings, patch),
 
@@ -51,4 +51,4 @@ const api: JaguarApi = {
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url),
 };
 
-contextBridge.exposeInMainWorld("jaguar", api);
+contextBridge.exposeInMainWorld("transferJaguar", api);

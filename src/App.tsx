@@ -31,15 +31,15 @@ export function App() {
   const [paths, setPaths] = useState<{ local: string; remote: string }>({ local: "", remote: "" });
 
   const refreshSites = useCallback(async () => {
-    setSites(await window.jaguar.listSites());
+    setSites(await window.transferJaguar.listSites());
   }, []);
 
   // Subscribe to transfer progress; refresh the current task list on mount.
   useEffect(() => {
-    void window.jaguar.transferList().then((list) => {
+    void window.transferJaguar.transferList().then((list) => {
       setTasks(new Map(list.map((t) => [t.id, t])));
     });
-    const unsub = window.jaguar.onTransferProgress((task) => {
+    const unsub = window.transferJaguar.onTransferProgress((task) => {
       setTasks((prev) => {
         const next = new Map(prev);
         next.set(task.id, task);
@@ -51,13 +51,13 @@ export function App() {
 
   // Open Settings when chosen from the native menu.
   useEffect(() => {
-    return window.jaguar.onOpenSettings(() => setShowSettings(true));
+    return window.transferJaguar.onOpenSettings(() => setShowSettings(true));
   }, []);
 
   useEffect(() => {
     void refreshSites();
-    void window.jaguar.localHome().then(setLocalHome);
-    void window.jaguar.getSettings().then(setSettings);
+    void window.transferJaguar.localHome().then(setLocalHome);
+    void window.transferJaguar.getSettings().then(setSettings);
   }, [refreshSites]);
 
   // Apply the theme to the document root whenever it changes.
@@ -69,7 +69,7 @@ export function App() {
   const updateSettings = useCallback(async (patch: Partial<AppSettings>) => {
     // Optimistic local update so the theme flips immediately, then persist.
     setSettings((prev) => ({ ...(prev ?? { theme: "light" }), ...patch }));
-    const saved = await window.jaguar.saveSettings(patch);
+    const saved = await window.transferJaguar.saveSettings(patch);
     setSettings(saved);
   }, []);
 
@@ -82,7 +82,7 @@ export function App() {
   const connect = useCallback(async (site: Site) => {
     setConnectingId(site.id);
     try {
-      const res = await window.jaguar.connect(site.id);
+      const res = await window.transferJaguar.connect(site.id);
       if (res.ok) {
         setSession({ sessionId: res.sessionId, site, cwd: res.cwd });
         setHostKey(null);
@@ -99,21 +99,21 @@ export function App() {
   const trustAndConnect = useCallback(async () => {
     if (!hostKey) return;
     const { site, prompt } = hostKey;
-    await window.jaguar.hostkeyTrust(prompt);
+    await window.transferJaguar.hostkeyTrust(prompt);
     setHostKey(null);
     await connect(site);
   }, [hostKey, connect]);
 
   const disconnect = useCallback(async () => {
     if (!session) return;
-    await window.jaguar.disconnect(session.sessionId);
+    await window.transferJaguar.disconnect(session.sessionId);
     setSession(null);
   }, [session]);
 
   const removeSite = useCallback(
     async (site: Site) => {
       if (session?.site.id === site.id) await disconnect();
-      await window.jaguar.deleteSite(site.id);
+      await window.transferJaguar.deleteSite(site.id);
       await refreshSites();
     },
     [session, disconnect, refreshSites]
@@ -123,10 +123,10 @@ export function App() {
   const localSep = navigator.platform.startsWith("Win") ? "\\" : "/";
   const localOps = useMemo<PaneOps>(
     () => ({
-      list: (p) => window.jaguar.localList(p),
-      rename: (from, toName) => window.jaguar.localRename(from, toName),
-      mkdir: (parent, name) => window.jaguar.localMkdir(parent, name),
-      delete: (p) => window.jaguar.localDelete(p),
+      list: (p) => window.transferJaguar.localList(p),
+      rename: (from, toName) => window.transferJaguar.localRename(from, toName),
+      mkdir: (parent, name) => window.transferJaguar.localMkdir(parent, name),
+      delete: (p) => window.transferJaguar.localDelete(p),
       sep: localSep,
     }),
     [localSep]
@@ -137,10 +137,10 @@ export function App() {
     if (!session) return null;
     const sid = session.sessionId;
     return {
-      list: (p) => window.jaguar.remoteList(sid, p),
-      rename: (from, toName) => window.jaguar.remoteRename(sid, from, toName),
-      mkdir: (parent, name) => window.jaguar.remoteMkdir(sid, parent, name),
-      delete: (p) => window.jaguar.remoteDelete(sid, p),
+      list: (p) => window.transferJaguar.remoteList(sid, p),
+      rename: (from, toName) => window.transferJaguar.remoteRename(sid, from, toName),
+      mkdir: (parent, name) => window.transferJaguar.remoteMkdir(sid, parent, name),
+      delete: (p) => window.transferJaguar.remoteDelete(sid, p),
       sep: "/",
     };
   }, [session]);
@@ -167,7 +167,7 @@ export function App() {
       for (const entry of entries) {
         const sourcePath = fromDir.replace(new RegExp(`${fromSep === "\\" ? "\\\\" : fromSep}+$`), "") + fromSep + entry.name;
         try {
-          await window.jaguar.transferEnqueue({
+          await window.transferJaguar.transferEnqueue({
             sessionId: session.sessionId,
             direction,
             sourcePath,
@@ -250,7 +250,7 @@ export function App() {
 
       <main className="content">
         <div className="content-head">
-          <strong>JaguarTransfer</strong>
+          <strong>TransferJaguar</strong>
           <span style={{ flex: 1 }} />
           {session && (
             <>
@@ -318,13 +318,13 @@ export function App() {
             if (t && (t.status === "running" || t.status === "paused" || t.status === "queued")) {
               setCancelConfirm(t);
             } else {
-              void window.jaguar.transferCancel(id);
+              void window.transferJaguar.transferCancel(id);
             }
           }}
-          onPause={(id) => void window.jaguar.transferPause(id)}
-          onResume={(id) => void window.jaguar.transferResume(id)}
+          onPause={(id) => void window.transferJaguar.transferPause(id)}
+          onResume={(id) => void window.transferJaguar.transferResume(id)}
           onClearFinished={() => {
-            void window.jaguar.transferClearFinished();
+            void window.transferJaguar.transferClearFinished();
             setTasks((prev) => {
               const next = new Map<string, import("./shared/types").TransferTask>();
               for (const [id, t] of prev) {
@@ -381,7 +381,7 @@ export function App() {
           confirmLabel="Cancel transfer"
           danger
           onConfirm={() => {
-            void window.jaguar.transferCancel(cancelConfirm.id);
+            void window.transferJaguar.transferCancel(cancelConfirm.id);
             setCancelConfirm(null);
           }}
           onCancel={() => setCancelConfirm(null)}

@@ -1,4 +1,4 @@
-// App settings persisted as JSON in the user's home dir (~/.jaguartransfer-settings.json).
+// App settings persisted as JSON in the user's home dir (~/.transferjaguar-settings.json).
 // Mirrors the BudgetLion settings pattern. Site profiles and known hosts live in
 // their own files (sites.ts / knownHosts.ts); secrets live in the OS keychain.
 
@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AppSettings } from "../src/shared/ipc.js";
 
-const SETTINGS_PATH = join(homedir(), ".jaguartransfer-settings.json");
+const SETTINGS_PATH = join(homedir(), ".transferjaguar-settings.json");
 
 const DEFAULTS: AppSettings = {
   theme: "light",

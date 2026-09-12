@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>About JaguarTransfer</title>
+  <title>About TransferJaguar</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -41,13 +41,13 @@
 </head>
 <body>
   <img id="icon">
-  <h1>JaguarTransfer</h1>
+  <h1>TransferJaguar</h1>
   <p>
     Version <span id="app-version"></span><br>
     ©2026 Richard Lesh<br>
     Built with Electron v<span id="electron-version"></span><br>
-    <a id="website" href="https://glowingcat.com/JaguarTransfer.html">Glowing Cat Software</a><br>
-    <a id="issues" href="https://github.com/richlesh/JaguarTransfer/issues">Report issues on GitHub</a>
+    <a id="website" href="https://glowingcat.com/TransferJaguar.html">Glowing Cat Software</a><br>
+    <a id="issues" href="https://github.com/richlesh/TransferJaguar/issues">Report issues on GitHub</a>
   </p>
   <button id="ok-btn">OK</button>
 
@@ -65,11 +65,11 @@
 
     document.getElementById("website").addEventListener("click", (e) => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://glowingcat.com/JaguarTransfer.html");
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/TransferJaguar.html");
     });
     document.getElementById("issues").addEventListener("click", (e) => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://github.com/richlesh/JaguarTransfer/issues");
+      ipcRenderer.invoke("open-external", "https://github.com/richlesh/TransferJaguar/issues");
     });
     document.getElementById("ok-btn").addEventListener("click", () => ipcRenderer.invoke("close-about"));
   </script>

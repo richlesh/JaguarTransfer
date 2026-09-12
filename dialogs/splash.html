@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>JaguarTransfer</title>
+  <title>TransferJaguar</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -33,14 +33,14 @@
 </head>
 <body>
   <img id="icon">
-  <h1>JaguarTransfer</h1>
+  <h1>TransferJaguar</h1>
   <p>Version <span id="app-version"></span></p>
   <p id="donate">
     If you enjoy using this product<br>
     please consider donating to help<br>
     fund this and other open source<br>
     projects at
-    <a id="donate-link" href="https://glowingcat.com/JaguarTransfer.html">Glowing Cat Software</a>.
+    <a id="donate-link" href="https://glowingcat.com/TransferJaguar.html">Glowing Cat Software</a>.
   </p>
 
   <script>
@@ -55,7 +55,7 @@
 
     document.getElementById("donate-link").addEventListener("click", (e) => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://glowingcat.com/JaguarTransfer.html");
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/TransferJaguar.html");
     });
 
     document.body.addEventListener("click", (e) => {

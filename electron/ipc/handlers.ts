@@ -1,5 +1,5 @@
-// Registers all IPC handlers for JaguarTransfer. The renderer talks to these via
-// the typed window.jaguar bridge (preload). All filesystem/network/secret access
+// Registers all IPC handlers for TransferJaguar. The renderer talks to these via
+// the typed window.transferJaguar bridge (preload). All filesystem/network/secret access
 // happens here in the main process; the renderer is sandboxed.
 
 import { ipcMain, shell } from "electron";

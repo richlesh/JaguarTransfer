@@ -47,7 +47,7 @@ export function SiteEditorDialog({ site, onCancel, onSaved }: Props) {
       secret: secret.length > 0 ? secret : undefined,
     };
     try {
-      await window.jaguar.saveSite(input);
+      await window.transferJaguar.saveSite(input);
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the site.");

@@ -1,4 +1,4 @@
-// Site profiles persisted as JSON (~/.jaguartransfer-sites.json). Contains NO
+// Site profiles persisted as JSON (~/.transferjaguar-sites.json). Contains NO
 // secrets — passwords and key passphrases live in the OS keychain (secrets.ts),
 // referenced by the site id.
 
@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Site, SiteInput } from "../src/shared/types.js";
 
-const SITES_PATH = join(homedir(), ".jaguartransfer-sites.json");
+const SITES_PATH = join(homedir(), ".transferjaguar-sites.json");
 
 function readAll(): Site[] {
   try {

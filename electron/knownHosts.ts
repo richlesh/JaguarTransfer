@@ -1,4 +1,4 @@
-// Trusted host keys (TOFU) persisted as JSON (~/.jaguartransfer-known-hosts.json).
+// Trusted host keys (TOFU) persisted as JSON (~/.transferjaguar-known-hosts.json).
 // Conceptually like OpenSSH's known_hosts: we remember the SHA-256 fingerprint
 // trusted for each host:port and refuse (prompt) when it changes.
 
@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { KnownHost } from "../src/shared/types.js";
 
-const KNOWN_HOSTS_PATH = join(homedir(), ".jaguartransfer-known-hosts.json");
+const KNOWN_HOSTS_PATH = join(homedir(), ".transferjaguar-known-hosts.json");
 
 function readAll(): KnownHost[] {
   try {

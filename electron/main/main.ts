@@ -1,4 +1,4 @@
-// Electron main process entry point for JaguarTransfer.
+// Electron main process entry point for TransferJaguar.
 
 import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
@@ -31,7 +31,7 @@ function createWindow(): void {
     ...(saved && saved.x != null && saved.y != null ? { x: saved.x, y: saved.y } : {}),
     minWidth: 820,
     minHeight: 520,
-    title: "JaguarTransfer",
+    title: "TransferJaguar",
     show: false,
     ...(windowIcon ? { icon: windowIcon } : {}),
     webPreferences: {

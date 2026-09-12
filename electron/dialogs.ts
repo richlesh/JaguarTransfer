@@ -7,8 +7,8 @@ import { app, BrowserWindow, Menu, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { loadSettings } from "./settings.js";
 
-const HOMEPAGE = "https://glowingcat.com/JaguarTransfer.html";
-const ISSUES = "https://github.com/richlesh/JaguarTransfer/issues";
+const HOMEPAGE = "https://glowingcat.com/TransferJaguar.html";
+const ISSUES = "https://github.com/richlesh/TransferJaguar/issues";
 
 function iconPath(): string {
   return join(app.getAppPath(), "resources", "app_icon_256.png");
@@ -140,9 +140,9 @@ export function buildMenu(win: BrowserWindow): void {
     {
       label: "Help",
       submenu: [
-        { label: "JaguarTransfer Website", click: () => shell.openExternal(HOMEPAGE) },
+        { label: "TransferJaguar Website", click: () => shell.openExternal(HOMEPAGE) },
         { label: "Report an Issue", click: () => shell.openExternal(ISSUES) },
-        ...(isMac ? [] : [{ label: "About JaguarTransfer", click: () => showAbout() } as Electron.MenuItemConstructorOptions]),
+        ...(isMac ? [] : [{ label: "About TransferJaguar", click: () => showAbout() } as Electron.MenuItemConstructorOptions]),
       ],
     },
   ];

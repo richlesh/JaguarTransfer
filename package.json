@@ -1,8 +1,8 @@
 {
-  "name": "jaguartransfer",
-  "productName": "JaguarTransfer",
+  "name": "transferjaguar",
+  "productName": "TransferJaguar",
   "version": "1.0.0",
-  "description": "JaguarTransfer - Fast SFTP file manager for slow network links",
+  "description": "TransferJaguar - Fast SFTP file manager for slow network links",
   "main": "dist-electron/electron/main/main.js",
   "type": "module",
   "scripts": {
@@ -23,10 +23,10 @@
     "dist:linux:arm64": "npm run build && electron-builder --linux --arm64"
   },
   "build": {
-    "appId": "com.richardlesh.jaguartransfer",
-    "productName": "JaguarTransfer",
+    "appId": "com.richardlesh.transferjaguar",
+    "productName": "TransferJaguar",
     "icon": "resources/app_icon",
-    "artifactName": "JaguarTransfer-${version}-${arch}.${ext}",
+    "artifactName": "TransferJaguar-${version}-${arch}.${ext}",
     "files": [
       "dist/**",
       "dist-electron/**",
@@ -64,7 +64,7 @@
     }
   },
   "keywords": ["sftp", "ssh", "file-transfer", "electron"],
-  "homepage": "https://glowingcat.com/JaguarTransfer.html",
+  "homepage": "https://glowingcat.com/TransferJaguar.html",
   "author": {
     "name": "Richard Lesh",
     "email": "richlesh@github.com"

@@ -1,5 +1,5 @@
 // Writes a CommonJS type marker so dist-electron/*.js are loaded as CommonJS,
-// even though the root package.json is "type": "module". JaguarTransfer has no
+// even though the root package.json is "type": "module". TransferJaguar has no
 // other runtime assets to copy (unlike BudgetLion's schema.sql).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

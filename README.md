@@ -1,6 +1,6 @@
 ![app_icon_256](resources/app_icon_256.png)
 
-# JaguarTransfer v1.0.0
+# TransferJaguar v1.0.0
 
 A fast, cross-platform **SFTP file manager** built for slow, high-latency links
 (VPNs), where SMB/AFP crawl. Built with Electron, React, and TypeScript.
@@ -36,14 +36,14 @@ and packaging/signing polish (M5). Jump-host/bastion support is a fast-follow.
 
 ## Data & security
 
-- **Site profiles** → `~/.jaguartransfer-sites.json` (no secrets).
-- **Trusted host keys** → `~/.jaguartransfer-known-hosts.json` (TOFU).
-- **App settings** → `~/.jaguartransfer-settings.json`.
+- **Site profiles** → `~/.transferjaguar-sites.json` (no secrets).
+- **Trusted host keys** → `~/.transferjaguar-known-hosts.json` (TOFU).
+- **App settings** → `~/.transferjaguar-settings.json`.
 - **Secrets** (passwords, key passphrases) → the **OS keychain** via
   `@napi-rs/keyring` (Keychain / Credential Manager / libsecret), referenced by
   site id — never written to the JSON files.
 - The renderer is sandboxed; all filesystem/network/secret access goes through
-  the main process behind a typed IPC bridge (`window.jaguar`).
+  the main process behind a typed IPC bridge (`window.transferJaguar`).
 
 ## Tech Stack
 

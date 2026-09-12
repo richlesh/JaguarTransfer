@@ -5,7 +5,7 @@
 
 import { Entry } from "@napi-rs/keyring";
 
-const SERVICE = "JaguarTransfer";
+const SERVICE = "TransferJaguar";
 
 function entryFor(siteId: string): Entry {
   // account = the site id; service groups all of our credentials.

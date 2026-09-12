@@ -1,4 +1,4 @@
-// Contract for the IPC bridge exposed on window.jaguar by the preload script.
+// Contract for the IPC bridge exposed on window.transferJaguar by the preload script.
 // Shared so both preload (implementation) and renderer (consumer) stay in sync.
 
 import type {
@@ -11,7 +11,7 @@ import type {
   TransferTask,
 } from "./types";
 
-/** App-level settings persisted to ~/.jaguartransfer-settings.json. */
+/** App-level settings persisted to ~/.transferjaguar-settings.json. */
 export interface AppSettings {
   theme: "light" | "dark";
   windowBounds?: { width: number; height: number; x?: number; y?: number };
@@ -31,8 +31,8 @@ export interface AppSettings {
   userName?: string;
 }
 
-/** The API surface exposed to the renderer via contextBridge (window.jaguar). */
-export interface JaguarApi {
+/** The API surface exposed to the renderer via contextBridge (window.transferJaguar). */
+export interface TransferJaguarApi {
   // Settings
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: Partial<AppSettings>): Promise<AppSettings>;

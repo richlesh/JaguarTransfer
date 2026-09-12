@@ -1,4 +1,4 @@
-// Shared domain types for JaguarTransfer, used by both the Electron main process
+// Shared domain types for TransferJaguar, used by both the Electron main process
 // and the React renderer. Kept free of any Node/Electron imports.
 
 /** How to authenticate to an SFTP server. */
