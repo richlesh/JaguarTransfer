@@ -314,7 +314,7 @@ export function App() {
         </div>
 
         <TransferQueue
-          tasks={[...tasks.values()].sort((a, b) => a.name.localeCompare(b.name))}
+          tasks={[...tasks.values()].sort((a, b) => b.createdAtMs - a.createdAtMs)}
           onCancel={(id) => {
             const t = tasks.get(id);
             // Confirm before canceling an active transfer; harmless states cancel directly.

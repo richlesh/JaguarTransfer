@@ -127,6 +127,8 @@ export interface TransferTask {
   direction: TransferDirection;
   /** Display name (top-level item name). */
   name: string;
+  /** When the transfer was initiated (epoch ms), for newest-first ordering. */
+  createdAtMs: number;
   sourcePath: string;
   destPath: string;
   status: TransferStatus;

@@ -39,11 +39,16 @@ export function showSplash(): void {
     resizable: false,
     frame: false,
     show: false,
+    center: true,
+    alwaysOnTop: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   splashWin.loadFile(join(app.getAppPath(), "dialogs", "splash.html"));
   splashWin.once("ready-to-show", () => {
     splashWin?.show();
+    // Raise above the main window (which is created after the splash on launch).
+    splashWin?.moveTop();
+    splashWin?.focus();
     splashWin?.webContents.send("icon-path", iconPath());
     splashWin?.webContents.send("app-version", app.getVersion());
   });
@@ -144,12 +149,12 @@ export function buildMenu(win: BrowserWindow): void {
             submenu: [
               { label: `About ${app.name}`, click: () => showAbout() },
               { type: "separator" as const },
-              { label: "License Key…", click: () => openLicense() },
               {
                 label: "Settings…",
                 accelerator: "Cmd+,",
                 click: () => win.webContents.send("open-settings"),
               },
+              { label: "License Key…", click: () => openLicense() },
               { type: "separator" as const },
               { role: "hide" as const },
               { role: "quit" as const },
@@ -167,6 +172,7 @@ export function buildMenu(win: BrowserWindow): void {
                 accelerator: "Ctrl+,",
                 click: () => win.webContents.send("open-settings"),
               } as Electron.MenuItemConstructorOptions,
+              { label: "License Key…", click: () => openLicense() } as Electron.MenuItemConstructorOptions,
               { type: "separator" as const },
             ]
           : []),
@@ -207,7 +213,6 @@ export function buildMenu(win: BrowserWindow): void {
           ? []
           : [
               { type: "separator" as const },
-              { label: "License Key…", click: () => openLicense() } as Electron.MenuItemConstructorOptions,
               { label: "About TransferJaguar", click: () => showAbout() } as Electron.MenuItemConstructorOptions,
             ]),
       ],

@@ -55,6 +55,7 @@ interface Task {
   sessionId: string;
   direction: "upload" | "download";
   name: string;
+  createdAtMs: number;
   sourcePath: string;
   destPath: string;
   status: TransferStatus;
@@ -97,6 +98,7 @@ function toPublic(t: Task): TransferTask {
     id: t.id,
     direction: t.direction,
     name: t.name,
+    createdAtMs: t.createdAtMs,
     sourcePath: t.sourcePath,
     destPath: t.destPath,
     status: t.status,
@@ -322,6 +324,7 @@ export async function enqueue(req: TransferRequest): Promise<string> {
     sessionId: req.sessionId,
     direction: req.direction,
     name: req.name,
+    createdAtMs: Date.now(),
     sourcePath: req.sourcePath,
     destPath,
     status: "queued",
