@@ -55,7 +55,7 @@ jobs:
       - name: Build renderer + main
         run: npm run build
 
-      - name: Build macOS ${{ matrix.arch }} DMG (signed + notarized)
+      - name: Build macOS ${{ matrix.arch }} DMG
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -64,27 +64,7 @@ jobs:
           CSC_KEY_PASSWORD: build-keychain-password
         run: |
           KEY_FILE=$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
-          # Prefer a base64-encoded key secret (APPLE_API_KEY_BASE64) to avoid the
-          # newline mangling that produces notarytool's 'invalidPEMDocument'. Fall
-          # back to the raw-PEM secret (APPLE_API_KEY) for compatibility.
-          if [ -n "${{ secrets.APPLE_API_KEY_BASE64 }}" ]; then
-            echo "${{ secrets.APPLE_API_KEY_BASE64 }}" | base64 --decode > "$KEY_FILE"
-          else
-            printf '%s\n' "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
-          fi
-          # Validate the decoded .p8 is a well-formed PEM before notarizing, so a
-          # bad secret fails fast with a clear message instead of deep in notarytool.
-          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_FILE" || ! grep -q "END PRIVATE KEY" "$KEY_FILE"; then
-            echo "::error::App Store Connect API key is not a valid .p8 PEM."
-            echo "Set APPLE_API_KEY_BASE64 to 'base64 -i AuthKey_XXXX.p8' (recommended, no newline"
-            echo "issues), or APPLE_API_KEY to the full raw .p8 contents including the BEGIN/END"
-            echo "lines and line breaks. Also confirm APPLE_API_KEY_ID and APPLE_API_ISSUER."
-            exit 1
-          fi
-          # A valid .p8 base64 body should span multiple lines; warn if it's one
-          # long line (a common paste error that yields invalidPEMDocument).
-          BODY_LINES=$(sed '1d;$d' "$KEY_FILE" | grep -c .)
-          echo "API key PEM body lines: $BODY_LINES"
+          echo "${{ secrets.APPLE_API_KEY }}" > "$KEY_FILE"
           APPLE_API_KEY="$KEY_FILE" ./node_modules/.bin/electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload DMG to release
